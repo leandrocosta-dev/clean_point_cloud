@@ -1,0 +1,11 @@
+# Dados de scan (nuvens brutas, projetos Revo Scan) - nao versionar
+nuvem_pontos/
+
+# Saidas geradas pelo pipeline (ply/logs de teste) - nao versionar
+pipeline/output/
+
+# Screenshots colados durante a conversa
+image*.png
+
+# Pasta de sessao do Claude Code
+.claude/

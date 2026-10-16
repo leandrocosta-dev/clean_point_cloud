@@ -1,0 +1,39 @@
+{
+  "icp": {
+    "enabled": true,
+    "iterations": 50,
+    "random_sampling_limit": 50000,
+    "overlap": 80,
+    "min_error_diff": 1e-6,
+    "farthest_removal": true
+  },
+  "keep_largest_component": {
+    "enabled": true,
+    "octree_level": 8,
+    "min_points": 1000,
+    "select": "smallest"
+  },
+  "sor": {
+    "enabled": true,
+    "knn": 6,
+    "sigma": 1.0
+  },
+  "noise": {
+    "enabled": true,
+    "mode": "radius",
+    "value": 2.0,
+    "error_type": "rel",
+    "error": 1.0,
+    "remove_isolated": true
+  },
+  "crop": {
+    "enabled": false,
+    "box": [0, 0, 0, 0, 0, 0],
+    "outside": false
+  },
+  "downsample": {
+    "enabled": true,
+    "method": "spatial",
+    "value": 0.2
+  }
+}
