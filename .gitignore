@@ -9,3 +9,15 @@ image*.png
 
 # Pasta de sessao do Claude Code
 .claude/
+
+# Dados de trabalho e saidas do moviai_scan - nao versionar
+moviai_scan/revo_work/
+moviai_scan/saida_atual/
+moviai_scan/testes/*.ply
+moviai_scan/testes/*.npy
+saida*/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
