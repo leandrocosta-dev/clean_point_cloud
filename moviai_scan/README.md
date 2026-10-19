@@ -1,12 +1,24 @@
 # MoviAI Scan
 
-Limpeza e realinhamento automático de nuvens de pontos do Revopoint Miraco Plus.
+Limpeza, realinhamento e correção de deriva de rastreamento do Revopoint Miraco Plus.
+Um sistema só, com uma linha de comando (`run.py`) para as quatro frentes:
+
+| Frente | Comandos | Entrada | Depende de |
+|---|---|---|---|
+| Nuvem exportada | `limpar`, `mesclar` | PLY exportado do Revo Scan | Open3D |
+| Malha | `malha` | PLY já limpo | Open3D |
+| CloudCompare | `cc limpar`, `cc deriva` | PLY | CloudCompare instalado |
+| Projeto do Revo Scan | `revo info`, `revo limpar`, `revo fundir`, `revo giro`, `revo aplicar` | pasta do projeto (`.revo`) | só numpy e scipy |
+
 Pipeline determinística: a LLM saiu do caminho crítico e virou inspetora opcional.
 
 ## Instalação
 
+Python 3.10 a 3.12 (o Open3D não tem pacote para 3.13).
+
 ```
-pip install -r requirements.txt
+python -m venv .venv
+.venv\Scripts\python -m pip install -r requirements.txt
 ```
 
 Para a inspeção por LLM (opcional): `pip install anthropic` e defina `ANTHROPIC_API_KEY`.
@@ -16,18 +28,30 @@ Para a inspeção por LLM (opcional): `pip install anthropic` e defina `ANTHROPI
 ```
 # Limpar uma nuvem (exporte do Revo Scan em PLY, unidade mm)
 python run.py limpar peca.ply --saida resultado/
-
-# Com inspeção final por LLM (1 chamada, no máximo 1 rodada de ajuste)
-python run.py limpar peca.ply --saida resultado/ --llm
-
-# Forçar ou desligar a detecção de base
-python run.py limpar peca.ply --base off
+python run.py limpar peca.ply --saida resultado/ --llm      # inspeção final por LLM
+python run.py limpar peca.ply --base off                    # forçar ou desligar a detecção de base
 
 # Mesclar varreduras separadas da mesma peça
 python run.py mesclar parte1.ply parte2.ply parte3.ply --saida resultado/ --limpar-depois
+
+# Malha Poisson da nuvem limpa
+python run.py malha resultado/peca_limpo.ply peca.stl --depth 9
+
+# CloudCompare (procura CloudCompare.exe em Program Files ou use --cc)
+python run.py cc limpar a.ply b.ply --saida limpo.ply [--config configs/cloudcompare_alta_resolucao.json] [--dry-run]
+python run.py cc limpar --componente _stage_x/a_COMPONENT_3.ply --saida limpo.ply   # quando a escolha automática errar
+python run.py cc deriva limpo.ply --saida sem_deriva.ply [--suporte 500]
+
+# Projeto do Revo Scan, quadro a quadro (o original NUNCA é alterado)
+python run.py revo info <projeto> [--calibrar]
+python run.py revo limpar <projeto> --scans 20261017_172640
+python run.py revo fundir <projeto> --scan 20261015_204805 --saida nuvem.ply [--correcao correcao.json]
+python run.py revo giro <projeto> --scan S --ref 0-69 --alvo 148-247 --rampa 70-147 \
+    --centro X,Y,Z --raio 22.91 --altura 46 [--base-de raw_preview_relatorio.json] --saida pasta/
+python run.py revo aplicar <projeto> --correcao pasta/correcao.json
 ```
 
-Código de saída: 0 = aprovado, 2 = revisar. Dá para usar em lote.
+Código de saída de `limpar` e `mesclar`: 0 = aprovado, 2 = revisar. Dá para usar em lote.
 
 ## O que sai
 
@@ -81,6 +105,29 @@ Se a região de sobreposição entre a parte boa e o trecho deslocado não tiver
 - Usar marcadores na peça ou na mesa nas regiões lisas.
 - Dividir a captura em varreduras curtas, cada uma com sobreposição que inclua algum detalhe (furo, ressalto, aresta), e usar `python run.py mesclar`.
 
+### Mescla de varreduras
+
+`mesclar` usa o mesmo registro. Encaixe ambíguo também NÃO é mesclado (status `ambiguo`, código de saída 2).
+Teste com duas partes do sintético que se encaixam por simetria: a versão anterior mesclava e entregava 70,5% de precisão
+(erro p99 de 21 mm) com código 0; a atual recusa e mantém 100%.
+
+## Projeto do Revo Scan (`revo`)
+
+Lê o `cache/frames.dataset` (SQLite com assinatura trocada) quadro a quadro. O formato está documentado em
+`moviai_scan/revo/formato.py` e no `CONTEXTO.md` da raiz. Tudo que grava vai para uma CÓPIA do projeto
+(guid novo, `size` recalculado, journal consolidado, assinatura restaurada). Destino existente é recusado.
+
+- `info`: quadros, modos, quadros com profundidade e os maiores saltos de pose, com o número que o Revo Scan mostra.
+  Use para achar o trecho suspeito e conferir no Revo Scan antes de mexer.
+- `limpar`: calibra cada modo contra o `raw_preview.ply` (pula o scan se o erro passar de 0,6 mm), acha o prato,
+  escolhe a peça pela mira da câmera e apaga de cada quadro os pixels fora dela. Poses intactas.
+- `giro` + `aplicar`: deriva de giro em torno do eixo de peça cilíndrica (trecho cego). Duas etapas de propósito:
+  `giro` só estima e grava `correcao.json` com `fusao_original.ply` e `fusao_corrigida.ply`; `aplicar` grava a cópia
+  depois que você conferir o detalhe não simétrico (plugue) contra o gabarito. Distância média à superfície não prova
+  encaixe em corpo cilíndrico. Se o prato não for achado automaticamente, passe `--base-de` com o relatório de
+  `run.py limpar` do `raw_preview.ply`. `--centro` é qualquer ponto do eixo da peça no referencial do mundo
+  (pode ser marcado no CloudCompare sobre a fusão). Exemplo da correção de 15/10: `configs/correcao_difusor_20261015.json`.
+
 ## Testes
 
 ```
@@ -97,6 +144,13 @@ Resultados de referência (dados sintéticos, ruído 0,03 mm, espaçamento 0,26 
 | detalhe | aprovado, trecho realinhado | 99,99% | 98,75% |
 | liso | revisar, trecho não mesclado | 99,99% | 64,15% |
 | mesclar 2 varreduras | mesclado | 100% | 100% |
+
+## Limitação conhecida: resultado não reprodutível em scan real
+
+Nos sintéticos duas execuções dão resultado idêntico. No `raw_preview.ply` real do scan de 15/10, a mesma entrada rodada
+duas vezes deu custos diferentes nas tentativas do Optuna e, numa das vezes, o trecho saiu `realinhado` e na outra
+`ambiguo`. A semente fixa não basta: as rotinas paralelas do Open3D (RANSAC/DBSCAN) variam entre execuções, e
+`OMP_NUM_THREADS=1` não resolve. Até corrigir, rode duas vezes em caso de dúvida e trate status diferente como `revisar`.
 
 ## Próximos passos
 

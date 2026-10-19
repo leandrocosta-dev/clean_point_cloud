@@ -17,53 +17,51 @@ Limpeza de nuvens de pontos e correção de deriva de rastreamento do scanner Re
 - Preferir EXCLUIR quadros ruins a corrigi-los quando a correção não for comprovada.
 - Conferir com o usuário, no Revo Scan, quais quadros ele vê como problemáticos antes de alterar qualquer coisa. O Revo usa exatamente as poses gravadas, não reposiciona.
 
-## Três frentes de código
+## Sistema único: `moviai_scan/`
 
-1. **`moviai_scan/`** (Python, Open3D): pipeline determinística sobre nuvem PLY já exportada. Ponto de entrada `run.py` (subcomandos `limpar` e `mesclar`), orquestração em `moviai_scan/pipeline.py::process`.
-2. **`moviai_scan/revo_investigacao/`**: scripts `revo_*.py` que leem e escrevem o projeto Revo quadro a quadro (poses em SQLite). São específicos do scan de 15/10 (eixo do cilindro, trechos de quadros e caminhos fixos no código, inclusive `/home/claude/...`). Ordem de execução no `LEIAME.md` da pasta. Não são reutilizáveis sem edição.
-3. **`pipeline/`** (PowerShell + CloudCompare CLI): `Clean-PointCloud.ps1` (ICP, extração de componentes, SOR, ruído, crop, downsample, configurado por `config.*.json`), `Fix-RotationalDrift.ps1` (RANSAC de cilindros, descarta fragmentos de passada deslocada) e `fuse_mesh.py` (Poisson em Open3D). `inspect_frames*.py` são sondas descartáveis do formato binário.
+Tudo passa por `moviai_scan/run.py` (subcomandos `limpar`, `mesclar`, `malha`, `cc limpar|deriva`, `revo info|limpar|fundir|giro|aplicar`). Os scripts antigos (`pipeline/*.ps1`, `fuse_mesh.py`, `revo_investigacao/`, `limpar_revo.py`, `revo_projeto.py`, `inspect_frames*.py`) foram absorvidos pelo pacote; estão no commit 7c12f4c se precisar consultar.
 
-`CONTEXTO.md` cita `moviai_scan/limpar_revo.py`, `moviai_scan/moviai_scan/revo_projeto.py` e `revo.py` (limpeza por quadro com calibração automática). Esses arquivos NÃO estão nesta pasta; confirmar com o usuário onde estão antes de assumir que existem.
+Módulos do pacote `moviai_scan/moviai_scan/`, por frente:
+- **Nuvem PLY exportada (Open3D):** `pipeline.process` orquestra; `clean`, `align`, `metrics`, `optimize`, `render`, `inspect_llm`, `config`, `geom`.
+- **Malha:** `malha.py` (Poisson).
+- **CloudCompare CLI:** `cloudcompare.py` + `cloudcompare_padrao.json` (configs alternativas em `moviai_scan/configs/`).
+- **Projeto do Revo Scan (sem Open3D):** `revo/formato.py` (leitura dos quadros, calibração, gravação de cópia), `revo/limpeza.py` (limpeza por quadro), `revo/giro.py` (deriva de giro em duas etapas: estimar e aplicar), `revo/info.py` (saltos de pose).
+
+`moviai_scan/__init__.py` só importa `config`; cada subcomando importa o que precisa, para a frente `revo` rodar sem Open3D. Mantenha assim.
 
 ## Comandos
 
 ```
-pip install -r moviai_scan/requirements.txt        # open3d, numpy, scipy, optuna, matplotlib
+# ambiente (Open3D não tem pacote para Python 3.13; o .venv da raiz usa 3.10)
+python -m venv .venv && .venv\Scripts\python -m pip install -r moviai_scan/requirements.txt
 
 # rodar a partir de moviai_scan/
-python run.py limpar peca.ply --saida resultado/ [--llm] [--base auto|on|off] [--config cfg.json]
-python run.py mesclar p1.ply p2.ply --saida resultado/ --limpar-depois
+..\.venv\Scripts\python run.py --help
+..\.venv\Scripts\python run.py limpar peca.ply --saida resultado/
 
-# testes (sintéticos, sem framework de teste)
-python testes/gerar_sintetico.py testes/detalhe.ply detalhe   # deve realinhar o trecho
-python testes/gerar_sintetico.py testes/liso.ply liso         # deve sair "revisar", trecho não mesclado
+# testes (sintéticos, sem framework de teste); referência: detalhe 99,99% / 98,75%, liso 99,99% / 64,15% (status revisar)
+python testes/gerar_sintetico.py testes/detalhe.ply detalhe
 python run.py limpar testes/detalhe.ply --saida saida_detalhe
 python testes/avaliar.py saida_detalhe/detalhe_limpo.ply testes/detalhe_verdade.ply
 
-# CloudCompare (procura CloudCompare.exe em Program Files ou usa -CCExe)
-.\pipeline\Clean-PointCloud.ps1 -Scans a.ply,b.ply -Output limpo.ply [-Config pipeline\config.highres.json] [-DryRun] [-KeepTemp] [-ResumeComponent comp.ply]
-.\pipeline\Fix-RotationalDrift.ps1 -InputPly limpo.ply -Output sem_deriva.ply [-SupportPoints 500]
-python pipeline/fuse_mesh.py --input limpo.ply --output malha.stl [--depth 9]
+# CloudCompare não instalado nesta máquina: validar com --dry-run --cc <qualquer arquivo>
 ```
 
-`run.py limpar` sai com código 0 = aprovado, 2 = revisar. Valores de referência dos testes sintéticos estão em `moviai_scan/README.md`.
+## Arquitetura da limpeza de PLY
 
-## Arquitetura do `moviai_scan`
-
-- Todos os parâmetros geométricos em `config.py` (`Params`) são MULTIPLICADORES do espaçamento médio entre pontos (mediana do vizinho mais próximo), calculado por nuvem. Não introduzir constantes em mm nesse pacote.
+- Todos os parâmetros geométricos em `config.py` (`Params`) são MULTIPLICADORES do espaçamento médio entre pontos (mediana do vizinho mais próximo), calculado por nuvem. Não introduzir constantes em mm nesse pacote. `Config.load` recusa chave desconhecida.
 - Nuvens acima de `work_max_points` (400 mil) são processadas numa cópia reduzida; os rótulos voltam para a nuvem original por vizinho mais próximo (`_propagate`).
-- Fluxo em `process`: diagnóstico, tentativa com parâmetros padrão, busca Optuna (semente fixa) só se reprovar nos `Gates`, rodada final com realinhamento, inspeção opcional por LLM, status, gravação.
-- `clean.py::run_clean` rotula cada ponto (base, ruído, ilha, duplicado, trecho ambíguo). Trechos deslocados são detectados ANTES do descarte de ilhas, senão um pedaço real da peça vira ilha.
-- `align.py::register`: FPFH + RANSAC + ICP com candidatos diversos, pontuação por costura de bordas abertas (`seam_score`) e análise de degenerescência do ICP (`stability`). Encaixe instável ou ambíguo nunca é mesclado: sai em `*_trechoN_sugestao.ply` e status `revisar`. Motivo: peça simétrica aceita encaixe espelhado com mais sobreposição que o correto.
-- `inspect_llm.py`: a LLM não escolhe parâmetros. Recebe render + métricas, devolve JSON com tipos de problema, e cada tipo mapeia para um delta fixo em `AJUSTES`. No máximo 1 rodada extra. Sem `anthropic` ou `ANTHROPIC_API_KEY`, segue sem ela.
-- Cada execução acrescenta uma linha em `historico_execucoes.jsonl` na pasta de saída (base para calibrar `Gates`, hoje ajustados só em dados sintéticos).
+- Fluxo em `process`: diagnóstico, tentativa com parâmetros padrão, busca Optuna só se reprovar nos `Gates`, rodada final com realinhamento, inspeção opcional por LLM, `_status` (todo alerta implica `revisar`), gravação.
+- `clean.py::run_clean` rotula cada ponto (base, ruído, ilha, duplicado, trecho ambíguo). Trechos deslocados são detectados ANTES do descarte de ilhas. `final_points` aplica as transformações dos trechos (e gira as normais) para métricas, render e gravação.
+- `align.py::register`: FPFH + RANSAC + ICP com candidatos diversos, costura de bordas (`seam_score`) e degenerescência do ICP (`stability`). Encaixe instável ou ambíguo nunca é mesclado, nem na limpeza nem em `merge_scans`.
+- **Não determinismo conhecido:** em scan real, duas execuções iguais podem dar status diferente (paralelismo do Open3D; semente e `OMP_NUM_THREADS=1` não resolvem). Nos sintéticos o resultado é idêntico. Ao comparar antes/depois de uma mudança, use os sintéticos.
 
-## Formato do projeto Revo Scan 6 (resumo; detalhes em `CONTEXTO.md`)
+## Formato do projeto Revo Scan 6 (resumo; detalhes em `revo/formato.py` e `CONTEXTO.md`)
 
-- `data/<scan>/cache/frames.dataset` é SQLite com os 16 primeiros bytes trocados por `RPAlgo_file_sys\0`. Ler: copiar e escrever `SQLite format 3\0`. Gravar: consolidar o WAL e restaurar a assinatura original.
+- `data/<scan>/cache/frames.dataset` é SQLite com os 16 primeiros bytes trocados por `RPAlgo_file_sys\0`. Ler: copiar e escrever `SQLite format 3\0`. Gravar: consolidar o WAL e restaurar a assinatura original (`gravar_copia_scan`).
 - `FrameInfo.bin`: cabeçalho de 16 bytes + matriz 4x4 float64 (pose câmera para mundo) + cauda. `FrameRGBD.data`: máscara de bits 800x600 + profundidades float32 em mm.
-- Numeração de quadro do Revo Scan = índice entre os quadros COM profundidade (FrameRGBD), na ordem (bloco, índice). Difere do índice sequencial quando há quadros sem profundidade.
+- Numeração de quadro do Revo Scan = índice entre os quadros COM profundidade (FrameRGBD), na ordem (bloco, índice). `RevoScan.numero_revo()` faz a conversão.
 
 ## Dados
 
-`nuvem_pontos/`, `pipeline/output/`, `image*.png` e `.claude/` estão no `.gitignore`. `moviai_scan/revo_work/` e `moviai_scan/saida_atual/` também são dados ou saídas geradas, não código.
+`nuvem_pontos/`, `pipeline/output/`, `moviai_scan/revo_work/`, `moviai_scan/saida_atual/`, `image*.png`, `.venv/` e `.claude/` estão no `.gitignore`.

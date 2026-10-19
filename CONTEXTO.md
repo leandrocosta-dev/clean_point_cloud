@@ -66,3 +66,11 @@ Responder em portugues do Brasil, direto, sem bajulacao, maxima especificidade. 
 - Uso: python limpar_revo.py C:\Users\pc\Desktop\Project20261017_171402 --scans 20261017_172640
 - Faz: calibra cada modo contra o raw_preview (pula o scan se erro > 0,6 mm), acha o plano do prato, separa objetos acima dele em voxels de 1 mm, escolhe a peca pela mira da camera, apaga em cada quadro os pixels fora da peca. Poses intactas (conferido byte a byte). Consolida o WAL antes de restaurar a assinatura.
 - Primeira saida: saida/Project20261017_171402_limpo (so o scan 20261017_172640). Pontos 88,6 M -> 18,2 M (21%). Peca = objeto 106 (117 de 176 miras). AGUARDANDO o usuario fundir no Revo Scan.
+
+## REFATORACAO EM SISTEMA UNICO (19/10)
+- Tudo virou o pacote moviai_scan com um CLI so: `python run.py <comando>` dentro de moviai_scan/. Ambiente em .venv (Python 3.10).
+- Equivalencias: limpar_revo.py -> `run.py revo limpar`; revo_fix/revo_write -> `run.py revo giro` (estima, grava fusoes antes/depois e correcao.json, nao toca no projeto) + `run.py revo aplicar` (grava a copia); revo_seg/revo_jump -> `run.py revo info`; revo_fit -> `run.py revo info --calibrar`; fuse_mesh.py -> `run.py malha`; Clean-PointCloud.ps1 e Fix-RotationalDrift.ps1 -> `run.py cc limpar` e `run.py cc deriva`. Codigo antigo no commit 7c12f4c.
+- Validado: `revo limpar` grava o mesmo conteudo da versao anterior (391 linhas iguais no 20261015_204805); `revo giro` no scan de 15/10 estima 17,30 graus (17,25 com a calibracao fixa antiga; o original deu 17,20); rampa por quadro identica a fixes.npy; `revo aplicar` confere as poses relendo a copia e o original fica intacto (hash).
+- Correcao de bug: `mesclar` mesclava encaixe ambiguo. Agora recusa (status ambiguo, saida 2).
+- Problema conhecido: `limpar` em PLY real nao e reprodutivel (paralelismo do Open3D). Na mesma entrada, o trecho do raw_preview de 15/10 saiu realinhado numa execucao e ambiguo em outra.
+- frameFlag.json de cada scan tem `disabled_index: []`. Provavel mecanismo do Revo Scan para excluir quadros; NAO confirmado.

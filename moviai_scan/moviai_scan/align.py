@@ -228,23 +228,28 @@ def register(source_pts, target_pts, spacing, seed=42, min_fitness=0.1, max_rmse
         "alternativas": [{k: (round(v, 3) if isinstance(v, float) else v)
                           for k, v in c.items() if k != "T"} for c in cands[:4]],
     }
-    extra["_todos"] = cands
     return best["T"], best["fitness"], best["rmse"], extra
 
 
-def merge_scans(scans: list, spacing: float, seed: int = 42, min_fitness: float = 0.2):
+def merge_scans(scans: list, spacing: float, seed: int = 42, min_fitness: float = 0.2,
+                max_rmse_mult: float = 1.5):
     """Mescla varias varreduras independentes (captura dividida em partes).
 
-    Cada varredura e alinhada sobre o acumulado. Retorna (pts_mesclados, relatorio).
+    Cada varredura e alinhada sobre o acumulado. Encaixe ambiguo NAO e mesclado,
+    pelo mesmo motivo da limpeza: um encaixe errado contamina a peca.
+    Retorna (pts_mesclados, relatorio).
     """
     acc = scans[0]
     rel = [{"scan": 0, "status": "referencia"}]
     for i, s in enumerate(scans[1:], start=1):
-        T, fit, rmse, extra = register(s, acc, spacing, seed, min_fitness=min_fitness)
-        ok = fit >= min_fitness and rmse <= 1.5 * spacing
+        T, fit, rmse, extra = register(s, acc, spacing, seed, min_fitness=min_fitness,
+                                       max_rmse_mult=max_rmse_mult)
+        ok = fit >= min_fitness and rmse <= max_rmse_mult * spacing
+        status = "rejeitado" if not ok else ("ambiguo" if extra.get("ambiguo") else "mesclado")
         rel.append({"scan": i, "fitness": round(fit, 3), "rmse": round(rmse, 4),
                     "costura": extra.get("costura"), "ambiguo": extra.get("ambiguo"),
-                    "status": "mesclado" if ok else "rejeitado", "T": np.round(T, 6).tolist()})
-        if ok:
+                    "motivo_ambiguidade": extra.get("motivo_ambiguidade", []),
+                    "status": status, "T": np.round(T, 6).tolist()})
+        if status == "mesclado":
             acc = np.vstack([acc, apply_T(T, s)])
     return acc, rel

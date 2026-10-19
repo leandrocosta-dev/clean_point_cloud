@@ -126,7 +126,7 @@ def run_clean(pts, spacing, P, cfg, align=True):
         ok = fit >= cfg.align_min_fitness and rmse <= cfg.align_max_rmse_mult * spacing
         rec = {"n_pontos": int(len(fidx)), "fitness": round(fit, 3),
                "rmse": round(rmse, 4), "status": "realinhado" if ok else "rejeitado",
-               **{k: v for k, v in extra.items() if not k.startswith("_")}}
+               **extra}
         if ok and extra.get("ambiguo"):
             # Nao mistura na nuvem: um encaixe errado contamina a peca.
             # Guarda a melhor sugestao para revisao manual.
@@ -148,12 +148,18 @@ def run_clean(pts, spacing, P, cfg, align=True):
     return labels, info, transforms
 
 
-def final_points(pts, labels, transforms):
-    """Pontos mantidos, ja com os trechos realinhados na posicao correta."""
+def final_points(pts, labels, transforms, normals=None):
+    """Pontos mantidos, ja com os trechos realinhados na posicao correta.
+
+    Retorna (pontos, mascara dos mantidos, normais giradas junto ou None).
+    """
     keep = labels >= 0
     out = pts[keep].copy()
+    nrm = normals[keep].copy() if normals is not None else None
     lk = labels[keep]
     for k, T in transforms.items():
         m = lk == k
         out[m] = apply_T(T, out[m])
-    return out, keep
+        if nrm is not None:
+            nrm[m] = nrm[m] @ np.asarray(T)[:3, :3].T
+    return out, keep, nrm

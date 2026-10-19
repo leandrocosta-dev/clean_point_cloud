@@ -11,11 +11,15 @@ from scipy.spatial import cKDTree
 
 from .config import Config
 from .geom import mean_spacing, make_working_cloud, apply_T
-from .clean import run_clean, BASE, NOISE, CLUSTER, DUP, AMBIG
+from .clean import run_clean, final_points, BASE, NOISE, CLUSTER, DUP, AMBIG
 from . import metrics as M
 from .optimize import tune
 from .render import render_views
 from . import inspect_llm
+
+# Removidos coloridos por motivo, para conferencia
+CORES_REMOVIDOS = {BASE: [0.35, 0.63, 0.88], NOISE: [0.88, 0.19, 0.19],
+                   CLUSTER: [0.94, 0.55, 0.0], DUP: [0.6, 0.3, 0.8], AMBIG: [0.9, 0.8, 0.1]}
 
 
 def _hash(path):
@@ -34,17 +38,9 @@ def _propagate(orig_pts, work_pts, work_labels):
 
 def _save_outputs(pcd, labels, transforms, out_dir, stem):
     pts = np.asarray(pcd.points)
-    keep = labels >= 0
-    out = o3d.geometry.PointCloud()
-    p = pts[keep].copy()
-    lk = labels[keep]
-    nrm = np.asarray(pcd.normals)[keep].copy() if pcd.has_normals() else None
-    for k, T in transforms.items():
-        m = lk == k
-        p[m] = apply_T(T, p[m])
-        if nrm is not None:
-            nrm[m] = nrm[m] @ np.asarray(T)[:3, :3].T
-    out.points = o3d.utility.Vector3dVector(p)
+    p, keep, nrm = final_points(pts, labels, transforms,
+                                np.asarray(pcd.normals) if pcd.has_normals() else None)
+    out = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(p))
     if pcd.has_colors():
         out.colors = o3d.utility.Vector3dVector(np.asarray(pcd.colors)[keep])
     if nrm is not None:
@@ -52,15 +48,86 @@ def _save_outputs(pcd, labels, transforms, out_dir, stem):
     path_ok = os.path.join(out_dir, f"{stem}_limpo.ply")
     o3d.io.write_point_cloud(path_ok, out)
 
-    # Removidos coloridos por motivo, para conferencia
     rem = ~keep
-    cores = {BASE: [0.35, 0.63, 0.88], NOISE: [0.88, 0.19, 0.19],
-             CLUSTER: [0.94, 0.55, 0.0], DUP: [0.6, 0.3, 0.8], AMBIG: [0.9, 0.8, 0.1]}
     rp = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(pts[rem]))
-    rp.colors = o3d.utility.Vector3dVector(np.array([cores.get(l, [0, 0, 0]) for l in labels[rem]]))
+    rp.colors = o3d.utility.Vector3dVector(np.array([CORES_REMOVIDOS.get(l, [0, 0, 0]) for l in labels[rem]]))
     path_rem = os.path.join(out_dir, f"{stem}_removidos.ply")
     o3d.io.write_point_cloud(path_rem, rp)
     return path_ok, path_rem
+
+
+def _save_suggestions(work, sugestoes, out_dir, stem):
+    """Trechos ambiguos na melhor posicao encontrada, para conferencia manual."""
+    paths = []
+    for i, sg in enumerate(sugestoes, start=1):
+        sp = os.path.join(out_dir, f"{stem}_trecho{i}_sugestao.ply")
+        o3d.io.write_point_cloud(sp, o3d.geometry.PointCloud(
+            o3d.utility.Vector3dVector(apply_T(sg["T"], work[sg["idx"]]))))
+        paths.append(sp)
+    return paths
+
+
+def _log_fragments(info, log):
+    for f in info["fragmentos"]:
+        log(f"    trecho {f['n_pontos']:,} pts: {f['status']} (fitness {f.get('fitness')}, "
+            f"rmse {f.get('rmse')}, costura {f.get('costura')}, candidatos {f.get('candidatos')})")
+        for alt in f.get("alternativas", []):
+            log(f"      candidato {alt['origem']}: costura={alt['costura']} fitness={alt['fitness']} "
+                f"estavel={alt['estavel']}")
+
+
+def _llm_round(work, spacing, raw_counts, cfg, state, img, stem, out_dir, log):
+    """Inspecao opcional por LLM (1 chamada; no maximo 1 rodada extra).
+
+    state = (labels, info, T, m, P). Retorna (veredito, state possivelmente ajustado).
+    """
+    labels, info, T, m, P = state
+    img_final = os.path.join(out_dir, f"{stem}_vistas_final.png")
+    render_views(work, labels, T, img_final, title=stem, only_final=True)
+    verdict = inspect_llm.inspect(img_final, m)
+    if verdict is None:
+        log("[5] LLM indisponivel (pacote anthropic ou ANTHROPIC_API_KEY ausente), seguindo sem ela")
+    elif verdict.get("aprovado"):
+        log("[5] LLM aprovou")
+    else:
+        P2, changed = inspect_llm.apply_feedback(P, verdict)
+        log(f"[5] LLM reprovou: {verdict.get('problemas')}")
+        if changed:
+            l2, i2, T2 = run_clean(work, spacing, P2, cfg, align=cfg.align_fragments)
+            m2 = M.compute(work, l2, i2, T2, spacing, raw_counts, cfg.gates, cfg.seed)
+            if m2.get("passou"):
+                state = (l2, i2, T2, m2, P2)
+                render_views(work, l2, T2, img, title=f"{stem}: limpeza (ajuste LLM)")
+                log("[5] ajuste aplicado")
+    return verdict, state
+
+
+def _status(m, info, verdict=None):
+    """Status final e alertas. Todo alerta manda para revisao."""
+    alertas = []
+    if not info.get("base") and m.get("maior_plano_frac", 0) > 0.35:
+        alertas.append("base nao detectada, mas um plano domina a nuvem final: conferir se a base ficou")
+    for f in info.get("fragmentos", []):
+        if f["status"] == "ambiguo":
+            alertas.append("trecho deslocado com encaixe ambiguo, NAO foi mesclado: "
+                           + "; ".join(f.get("motivo_ambiguidade", [])))
+    if m.get("fragmentos_rejeitados", 0) > 0:
+        alertas.append("existe trecho grande que nao alinhou: possivel perda de rastreamento sem sobreposicao")
+    if m.get("suspeita_superficie_dupla_frac", 0) > 0.05:
+        alertas.append("suspeita de superficie dupla: trecho deslocado pode estar encostado na peca")
+    llm_reprovou = bool(verdict) and not verdict.get("aprovado")
+    revisar = not m.get("passou") or bool(alertas) or llm_reprovou
+    return ("revisar" if revisar else "aprovado"), alertas
+
+
+def _write_report(rel, out_dir, stem):
+    with open(os.path.join(out_dir, f"{stem}_relatorio.json"), "w", encoding="utf-8") as f:
+        json.dump(rel, f, ensure_ascii=False, indent=2)
+    # Historico acumulado: base para calibrar criterios e treinar modelo no futuro
+    with open(os.path.join(out_dir, "historico_execucoes.jsonl"), "a", encoding="utf-8") as f:
+        f.write(json.dumps({k: rel[k] for k in ("arquivo", "hash", "inicio", "status",
+                                                 "parametros_finais", "metricas", "tempo_s")},
+                           ensure_ascii=False) + "\n")
 
 
 def process(input_path, out_dir, cfg: Config = None, use_llm=False, log=print):
@@ -70,6 +137,7 @@ def process(input_path, out_dir, cfg: Config = None, use_llm=False, log=print):
     t0 = time.time()
     rel = {"arquivo": input_path, "hash": _hash(input_path), "inicio": time.strftime("%Y-%m-%d %H:%M:%S")}
 
+    # 1. Diagnostico
     pcd = o3d.io.read_point_cloud(input_path)
     orig = np.asarray(pcd.points)
     if len(orig) == 0:
@@ -101,73 +169,24 @@ def process(input_path, out_dir, cfg: Config = None, use_llm=False, log=print):
     log("[4] rodada final com realinhamento...")
     labels, info, T = run_clean(work, spacing, P, cfg, align=cfg.align_fragments)
     m = M.compute(work, labels, info, T, spacing, raw_counts, cfg.gates, cfg.seed)
-    for f in info["fragmentos"]:
-        log(f"    trecho {f['n_pontos']:,} pts: {f['status']} (fitness {f.get('fitness')}, "
-            f"rmse {f.get('rmse')}, costura {f.get('costura')}, candidatos {f.get('candidatos')})")
-        for alt in f.get("alternativas", []):
-            log(f"      candidato {alt['origem']}: costura={alt['costura']} fitness={alt['fitness']} "
-                f"estavel={alt['estavel']}")
-
+    _log_fragments(info, log)
     img = os.path.join(out_dir, f"{stem}_vistas.png")
     render_views(work, labels, T, img, title=f"{stem}: limpeza")
 
-    # 5. Inspecao opcional por LLM (1 chamada; no maximo 1 rodada extra)
+    # 5. Inspecao opcional por LLM
     if use_llm:
-        img_final = os.path.join(out_dir, f"{stem}_vistas_final.png")
-        render_views(work, labels, T, img_final, title=stem, only_final=True)
-        verdict = inspect_llm.inspect(img_final, m)
-        rel["llm"] = verdict
-        if verdict is None:
-            log("[5] LLM indisponivel (pacote anthropic ou ANTHROPIC_API_KEY ausente), seguindo sem ela")
-        elif not verdict.get("aprovado"):
-            P2, changed = inspect_llm.apply_feedback(P, verdict)
-            log(f"[5] LLM reprovou: {verdict.get('problemas')}")
-            if changed:
-                l2, i2, T2 = run_clean(work, spacing, P2, cfg, align=cfg.align_fragments)
-                m2 = M.compute(work, l2, i2, T2, spacing, raw_counts, cfg.gates, cfg.seed)
-                if m2.get("passou"):
-                    labels, info, T, m, P = l2, i2, T2, m2, P2
-                    render_views(work, labels, T, img, title=f"{stem}: limpeza (ajuste LLM)")
-                    log("[5] ajuste aplicado")
-        else:
-            log("[5] LLM aprovou")
+        rel["llm"], (labels, info, T, m, P) = _llm_round(work, spacing, raw_counts, cfg,
+                                                         (labels, info, T, m, P), img, stem, out_dir, log)
 
     # 6. Status final
-    status = "aprovado"
-    if not m.get("passou"):
-        status = "revisar"
-    if m.get("fragmentos_rejeitados", 0) > 0:
-        status = "revisar"  # existe trecho que parece peca mas nao alinhou
-    if m.get("suspeita_superficie_dupla_frac", 0) > 0.05:
-        status = "revisar"
-    alertas = []
-    if not info.get("base") and m.get("maior_plano_frac", 0) > 0.35:
-        alertas.append("base nao detectada, mas um plano domina a nuvem final: conferir se a base ficou")
-        status = "revisar"
-    for f in info.get("fragmentos", []):
-        if f["status"] == "ambiguo":
-            alertas.append("trecho deslocado com encaixe ambiguo, NAO foi mesclado: "
-                           + "; ".join(f.get("motivo_ambiguidade", [])))
-            status = "revisar"
-    if m.get("fragmentos_rejeitados", 0) > 0:
-        alertas.append("existe trecho grande que nao alinhou: possivel perda de rastreamento sem sobreposicao")
-    if m.get("suspeita_superficie_dupla_frac", 0) > 0.05:
-        alertas.append("suspeita de superficie dupla: trecho deslocado pode estar encostado na peca")
+    status, alertas = _status(m, info, rel.get("llm"))
     for a in alertas:
         log(f"    ALERTA: {a}")
-    if use_llm and rel.get("llm") and not rel["llm"].get("aprovado") and status == "aprovado":
-        status = "revisar"
 
     # 7. Leva rotulos para a nuvem original e salva
     full_labels = _propagate(orig, work, labels) if reduced else labels
     path_ok, path_rem = _save_outputs(pcd, full_labels, T, out_dir, stem)
-    sugestoes = []
-    for i, sg in enumerate(info.get("sugestoes", []), start=1):
-        sp = os.path.join(out_dir, f"{stem}_trecho{i}_sugestao.ply")
-        o3d.io.write_point_cloud(sp, o3d.geometry.PointCloud(
-            o3d.utility.Vector3dVector(apply_T(sg["T"], work[sg["idx"]]))))
-        sugestoes.append(sp)
-    info.pop("sugestoes", None)
+    sugestoes = _save_suggestions(work, info.pop("sugestoes", []), out_dir, stem)
 
     rel.update({
         "status": status,
@@ -180,12 +199,6 @@ def process(input_path, out_dir, cfg: Config = None, use_llm=False, log=print):
         "saidas": {"limpo": path_ok, "removidos": path_rem, "vistas": img, "sugestoes": sugestoes},
         "tempo_s": round(time.time() - t0, 1),
     })
-    with open(os.path.join(out_dir, f"{stem}_relatorio.json"), "w", encoding="utf-8") as f:
-        json.dump(rel, f, ensure_ascii=False, indent=2)
-    # Historico acumulado: base para calibrar criterios e treinar modelo no futuro
-    with open(os.path.join(out_dir, "historico_execucoes.jsonl"), "a", encoding="utf-8") as f:
-        f.write(json.dumps({k: rel[k] for k in ("arquivo", "hash", "inicio", "status",
-                                                 "parametros_finais", "metricas", "tempo_s")},
-                           ensure_ascii=False) + "\n")
+    _write_report(rel, out_dir, stem)
     log(f"[ok] status={status} | {m.get('n_final', 0):,} pontos (trabalho) | {rel['tempo_s']} s")
     return rel

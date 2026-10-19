@@ -55,11 +55,12 @@ class Config:
         with open(path, "r", encoding="utf-8") as f:
             raw = json.load(f)
         cfg = Config()
-        for f_ in fields(Config):
-            if f_.name in raw and f_.name not in ("params", "gates"):
-                setattr(cfg, f_.name, raw[f_.name])
-        for k, v in raw.get("params", {}).items():
-            setattr(cfg.params, k, v)
-        for k, v in raw.get("gates", {}).items():
-            setattr(cfg.gates, k, v)
+        # Chave desconhecida (erro de digitacao) seria ignorada em silencio
+        for obj, valores in ((cfg, {k: v for k, v in raw.items() if k not in ("params", "gates")}),
+                             (cfg.params, raw.get("params", {})), (cfg.gates, raw.get("gates", {}))):
+            validas = {f_.name for f_ in fields(obj)}
+            for k, v in valores.items():
+                if k not in validas:
+                    raise ValueError(f"{path}: chave desconhecida '{k}' em {type(obj).__name__}")
+                setattr(obj, k, v)
         return cfg

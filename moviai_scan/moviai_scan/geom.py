@@ -1,7 +1,7 @@
 """Funcoes geometricas basicas."""
 import numpy as np
 import open3d as o3d
-from scipy.spatial import cKDTree, ConvexHull
+from scipy.spatial import cKDTree
 
 
 def to_pcd(pts: np.ndarray) -> o3d.geometry.PointCloud:
@@ -38,15 +38,6 @@ def plane_basis(n: np.ndarray):
     u /= np.linalg.norm(u)
     v = np.cross(n, u)
     return u, v
-
-
-def hull_area_2d(p2: np.ndarray) -> float:
-    if len(p2) < 3:
-        return 0.0
-    try:
-        return float(ConvexHull(p2).volume)  # em 2D, volume = area
-    except Exception:
-        return 0.0
 
 
 def apply_T(T: np.ndarray, pts: np.ndarray) -> np.ndarray:

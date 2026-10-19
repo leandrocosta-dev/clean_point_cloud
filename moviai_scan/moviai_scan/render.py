@@ -50,7 +50,7 @@ def _row(axes, layers, rng, lims, max_pts, row_title=None):
 
 def render_views(pts, labels, transforms, path, title="", max_pts=80_000, seed=42, only_final=False):
     rng = np.random.default_rng(seed)
-    fin, keep = final_points(pts, labels, transforms)
+    fin, keep, _ = final_points(pts, labels, transforms)
     lk = labels[keep]
     crua = title.endswith("crua")
     final_layers = [("nuvem crua" if crua else "peca", fin[lk == 0]), ("realinhado", fin[lk > 0])]

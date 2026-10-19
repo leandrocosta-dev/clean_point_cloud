@@ -16,7 +16,7 @@ def compute(pts, labels, info, transforms, spacing, raw_counts, gates, seed=42):
     n_base = int((labels == BASE).sum())
     noise = (labels == NOISE) | (labels == CLUSTER)
     nonbase = max(1, n - n_base)
-    fin, keep = final_points(pts, labels, transforms)
+    fin, keep, _ = final_points(pts, labels, transforms)
     n_keep = len(fin)
     m = {"n_total": n, "n_base": n_base, "n_ruido": int(noise.sum()), "n_final": n_keep}
     if n_keep < 50:
