@@ -25,9 +25,11 @@ Módulos do pacote `moviai_scan/moviai_scan/`, por frente:
 - **Nuvem PLY exportada (Open3D):** `pipeline.process` orquestra; `clean`, `align`, `metrics`, `optimize`, `render`, `inspect_llm`, `config`, `geom`.
 - **Malha:** `malha.py` (Poisson).
 - **CloudCompare CLI:** `cloudcompare.py` + `cloudcompare_padrao.json` (configs alternativas em `moviai_scan/configs/`).
-- **Projeto do Revo Scan (sem Open3D):** `revo/formato.py` (leitura dos quadros, calibração, gravação de cópia), `revo/limpeza.py` (limpeza por quadro), `revo/giro.py` (deriva de giro em duas etapas: estimar e aplicar), `revo/info.py` (saltos de pose).
+- **Projeto do Revo Scan:** `revo/formato.py` (leitura dos quadros, calibração, gravação de cópia), `revo/prato.py` (prato pelas câmeras, amostra de quadros), `revo/limpeza.py` (limpeza direto nos quadros com o motor do PLY; propõe correção de pose por quadro), `revo/giro.py` (deriva de giro em duas etapas: estimar e aplicar; `aplicar` também grava a correção do `limpar`), `revo/info.py` (saltos de pose).
 
-`moviai_scan/__init__.py` só importa `config`; cada subcomando importa o que precisa, para a frente `revo` rodar sem Open3D. Mantenha assim.
+`moviai_scan/__init__.py` só importa `config`; cada subcomando importa o que precisa. Só `revo/limpeza.py` usa Open3D (pelo motor); `formato`, `prato`, `giro` e `info` rodam sem ele. Mantenha assim.
+
+`revo limpar` funde todos os quadros numa grade de voxels, roda `pipeline.limpar_trabalho` (mesmo fluxo do PLY) e devolve o rótulo a cada pixel pela chave do voxel. `run_clean` aceita `base_fixa` (prato achado pelas câmeras) e `escolher` (regra de peça e de candidatos a trecho usando de que quadro veio cada ponto). Teste com gabarito: injetar deriva conhecida com `revo aplicar` (correção tipo `quadros`) numa cópia e conferir se o `limpar` acha os mesmos quadros e a T inversa.
 
 ## Comandos
 

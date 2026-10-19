@@ -56,7 +56,7 @@ def _save_outputs(pcd, labels, transforms, out_dir, stem):
     return path_ok, path_rem
 
 
-def _save_suggestions(work, sugestoes, out_dir, stem):
+def salvar_sugestoes(work, sugestoes, out_dir, stem):
     """Trechos ambiguos na melhor posicao encontrada, para conferencia manual."""
     paths = []
     for i, sg in enumerate(sugestoes, start=1):
@@ -102,7 +102,7 @@ def _llm_round(work, spacing, raw_counts, cfg, state, img, stem, out_dir, log):
     return verdict, state
 
 
-def _status(m, info, verdict=None):
+def status_final(m, info, verdict=None):
     """Status final e alertas. Todo alerta manda para revisao."""
     alertas = []
     if not info.get("base") and m.get("maior_plano_frac", 0) > 0.35:
@@ -130,6 +130,33 @@ def _write_report(rel, out_dir, stem):
                            ensure_ascii=False) + "\n")
 
 
+def limpar_trabalho(work, spacing, raw_counts, cfg, rel, log=print, **kw_clean):
+    """Etapas 2 a 4 sobre a nuvem de trabalho. Usada pelo PLY e pelo projeto Revo.
+
+    kw_clean vai para run_clean (base_fixa, escolher). Preenche rel com a tentativa padrao e a busca.
+    Retorna (labels, info, transforms, metricas, parametros).
+    """
+    # 2. Tentativa com parametros por regra (sem LLM, sem busca)
+    P = cfg.params
+    labels, info, T = run_clean(work, spacing, P, cfg, align=False, **kw_clean)
+    m = M.compute(work, labels, info, T, spacing, raw_counts, cfg.gates, cfg.seed)
+    rel["tentativa_padrao"] = {"passou": m.get("passou"), "reprovado_em": m.get("reprovado_em")}
+    log(f"[2] parametros padrao: passou={m.get('passou')} reprovado_em={m.get('reprovado_em')}")
+
+    # 3. Se reprovou, busca de parametros
+    if not m.get("passou"):
+        log(f"[3] buscando parametros (ate {cfg.optimize_trials} tentativas)...")
+        P, best_cost, n_trials = tune(work, spacing, cfg, raw_counts, log=log, **kw_clean)
+        rel["otimizacao"] = {"tentativas": n_trials, "melhor_custo": round(best_cost, 4)}
+
+    # 4. Rodada final com realinhamento de trechos deslocados
+    log("[4] rodada final com realinhamento...")
+    labels, info, T = run_clean(work, spacing, P, cfg, align=cfg.align_fragments, **kw_clean)
+    m = M.compute(work, labels, info, T, spacing, raw_counts, cfg.gates, cfg.seed)
+    _log_fragments(info, log)
+    return labels, info, T, m, P
+
+
 def process(input_path, out_dir, cfg: Config = None, use_llm=False, log=print):
     cfg = cfg or Config()
     os.makedirs(out_dir, exist_ok=True)
@@ -152,24 +179,8 @@ def process(input_path, out_dir, cfg: Config = None, use_llm=False, log=print):
     render_views(work, np.zeros(len(work), int), {},
                  os.path.join(out_dir, f"{stem}_vistas_antes.png"), title=f"{stem}: nuvem crua")
 
-    # 2. Tentativa com parametros por regra (sem LLM, sem busca)
-    P = cfg.params
-    labels, info, T = run_clean(work, spacing, P, cfg, align=False)
-    m = M.compute(work, labels, info, T, spacing, raw_counts, cfg.gates, cfg.seed)
-    rel["tentativa_padrao"] = {"passou": m.get("passou"), "reprovado_em": m.get("reprovado_em")}
-    log(f"[2] parametros padrao: passou={m.get('passou')} reprovado_em={m.get('reprovado_em')}")
-
-    # 3. Se reprovou, busca de parametros
-    if not m.get("passou"):
-        log(f"[3] buscando parametros (ate {cfg.optimize_trials} tentativas)...")
-        P, best_cost, n_trials = tune(work, spacing, cfg, raw_counts, log=log)
-        rel["otimizacao"] = {"tentativas": n_trials, "melhor_custo": round(best_cost, 4)}
-
-    # 4. Rodada final com realinhamento de trechos deslocados
-    log("[4] rodada final com realinhamento...")
-    labels, info, T = run_clean(work, spacing, P, cfg, align=cfg.align_fragments)
-    m = M.compute(work, labels, info, T, spacing, raw_counts, cfg.gates, cfg.seed)
-    _log_fragments(info, log)
+    # 2 a 4. Tentativa padrao, busca se reprovar, rodada final com realinhamento
+    labels, info, T, m, P = limpar_trabalho(work, spacing, raw_counts, cfg, rel, log)
     img = os.path.join(out_dir, f"{stem}_vistas.png")
     render_views(work, labels, T, img, title=f"{stem}: limpeza")
 
@@ -179,14 +190,14 @@ def process(input_path, out_dir, cfg: Config = None, use_llm=False, log=print):
                                                          (labels, info, T, m, P), img, stem, out_dir, log)
 
     # 6. Status final
-    status, alertas = _status(m, info, rel.get("llm"))
+    status, alertas = status_final(m, info, rel.get("llm"))
     for a in alertas:
         log(f"    ALERTA: {a}")
 
     # 7. Leva rotulos para a nuvem original e salva
     full_labels = _propagate(orig, work, labels) if reduced else labels
     path_ok, path_rem = _save_outputs(pcd, full_labels, T, out_dir, stem)
-    sugestoes = _save_suggestions(work, info.pop("sugestoes", []), out_dir, stem)
+    sugestoes = salvar_sugestoes(work, info.pop("sugestoes", []), out_dir, stem)
 
     rel.update({
         "status": status,

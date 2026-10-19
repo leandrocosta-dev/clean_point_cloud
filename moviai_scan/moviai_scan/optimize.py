@@ -10,7 +10,8 @@ from .clean import run_clean
 from . import metrics as M
 
 
-def tune(pts, spacing, cfg, raw_counts, log=print):
+def tune(pts, spacing, cfg, raw_counts, log=print, **kw_clean):
+    """kw_clean vai direto para run_clean (base_fixa, escolher)."""
     optuna.logging.set_verbosity(optuna.logging.WARNING)
     base_p = cfg.params
 
@@ -21,7 +22,7 @@ def tune(pts, spacing, cfg, raw_counts, log=print):
                     dbscan_eps_mult=trial.suggest_float("dbscan_eps_mult", 2.0, 7.0),
                     base_dist_mult=trial.suggest_float("base_dist_mult", 1.5, 6.0),
                     base_margin_mult=trial.suggest_float("base_margin_mult", 0.5, 4.0))
-        labels, info, T = run_clean(pts, spacing, P, cfg, align=False)
+        labels, info, T = run_clean(pts, spacing, P, cfg, align=False, **kw_clean)
         m = M.compute(pts, labels, info, T, spacing, raw_counts, cfg.gates, cfg.seed)
         trial.set_user_attr("passou", bool(m.get("passou")))
         c = M.cost(m, cfg.gates)

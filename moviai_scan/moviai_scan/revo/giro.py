@@ -21,7 +21,7 @@ from scipy.spatial import cKDTree
 
 from .formato import (RevoScan, eixos_do_plano, transformar, voxel_media, gravar_copia_scan, gravar_revo,
                       gravar_ply_xyz, arquivo_revo, preparar_destino, exigir_calibracao)
-from .limpeza import amostrar, achar_base
+from .prato import amostrar, achar_base
 
 
 def rotacao_eixo(ponto, direcao, graus):
@@ -92,15 +92,15 @@ def estimar_giro(scan, base, centro, raio, altura, ref, alvo, voxel=0.3, margem=
 
 
 def fundir(scan, correcao=None, voxel=0.15, log=print):
-    """Funde todos os quadros com profundidade numa nuvem (opcionalmente com a correcao de giro)."""
-    giros = giros_por_quadro(correcao, len(scan.ids)) if correcao else None
+    """Funde todos os quadros com profundidade numa nuvem (opcionalmente com a correcao de pose)."""
+    novas, mud = poses_corrigidas(scan, correcao) if correcao else (None, np.zeros(len(scan.ids), bool))
     acc, blocos, n_blocos = np.empty((0, 3)), [], 0
     for k in range(len(scan.ids)):
         P, _ = scan.pontos(k)
         if P is None:
             continue
-        if giros is not None and giros[k]:
-            P = transformar(P, rotacao_eixo(correcao["eixo_ponto"], correcao["eixo_direcao"], giros[k]))
+        if mud[k]:
+            P = transformar(P, novas[k] @ np.linalg.inv(scan.T[k]))
         blocos.append(P)
         n_blocos += len(P)
         if n_blocos > 5_000_000:      # reduz aos poucos para caber na memoria
@@ -146,11 +146,14 @@ def preparar_correcao(proj, nome_scan, ref, alvo, rampa, centro, raio, altura, s
 
 
 def aplicar(proj, caminho_correcao, saida=None, log=print):
-    """Etapa 2: grava uma COPIA do projeto com as poses corrigidas. O original nao e tocado."""
+    """Etapa 2: grava uma COPIA do projeto com as poses corrigidas. O original nao e tocado.
+
+    Aceita a correcao de 'revo giro' e a de 'revo limpar' (tipo quadros).
+    """
     with open(caminho_correcao, encoding="utf-8") as f:
         cor = json.load(f)
     proj = os.path.abspath(proj)
-    saida, nome = preparar_destino(proj, "_giro", saida)
+    saida, nome = preparar_destino(proj, "_corrigido" if cor.get("tipo") == "quadros" else "_giro", saida)
     with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
         with RevoScan(os.path.join(proj, "data", cor["scan"]), tmp) as scan:
             r = aplicar_correcao(scan, cor, proj, saida, nome, tmp, log)
@@ -159,18 +162,33 @@ def aplicar(proj, caminho_correcao, saida=None, log=print):
 
 
 def poses_corrigidas(scan, correcao):
+    """Poses novas e mascara dos quadros alterados.
+
+    tipo giro (padrao): rotacao em torno do eixo, por quadro (giros_por_quadro).
+    tipo quadros: pose = T @ pose para os quadros (indice na ordem de captura) de cada grupo.
+    """
+    if correcao.get("tipo") == "quadros":
+        if correcao["n_quadros"] != len(scan.ids):
+            raise ValueError(f"a correcao e de um scan com {correcao['n_quadros']} quadros; "
+                             f"este tem {len(scan.ids)}")
+        novas, mud = scan.T.copy(), np.zeros(len(scan.ids), bool)
+        for g in correcao["grupos"]:
+            for k in g["quadros"]:
+                novas[k] = np.asarray(g["T"]) @ scan.T[k]
+                mud[k] = True
+        return novas, mud
     giros = giros_por_quadro(correcao, len(scan.ids))
     return np.array([rotacao_eixo(correcao["eixo_ponto"], correcao["eixo_direcao"], g) @ T if g else T
-                     for g, T in zip(giros, scan.T)]), giros
+                     for g, T in zip(giros, scan.T)]), giros != 0
 
 
 def aplicar_correcao(scan, correcao, proj, saida, nome, tmp, log=print):
-    """Grava a copia do projeto com pose = R_giro(k) @ pose em cada quadro corrigido e confere relendo."""
-    novas, giros = poses_corrigidas(scan, correcao)
+    """Grava a copia do projeto com as poses corrigidas e confere relendo."""
+    novas, mud = poses_corrigidas(scan, correcao)
 
     def corrigir_poses(cn):
         for k, (i, b) in enumerate(zip(scan.ids, scan.bins)):
-            if giros[k]:
+            if mud[k]:
                 cn.execute("update FrameInfo set bin=? where id=?",
                            (b[:16] + novas[k].astype("<f8").tobytes() + b[144:], i))
 
@@ -188,7 +206,7 @@ def aplicar_correcao(scan, correcao, proj, saida, nome, tmp, log=print):
             raise RuntimeError("a copia gravada tem quadros diferentes do original")
         erro = float(np.abs(copia.T - novas).max())
         resto_igual = all(a[:16] == b[:16] and a[144:] == b[144:] for a, b in zip(copia.bins, scan.bins))
-    n_mud = int(np.count_nonzero(giros))
+    n_mud = int(np.count_nonzero(mud))
     log(f"   {n_mud} poses corrigidas | erro de gravacao {erro:.2e} | resto do registro igual: {resto_igual} "
         f"| integridade: {integ}")
     log("   raw_preview.ply e preview.png da copia continuam os antigos")

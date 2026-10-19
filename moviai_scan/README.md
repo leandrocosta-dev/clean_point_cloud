@@ -8,7 +8,7 @@ Um sistema só, com uma linha de comando (`run.py`) para as quatro frentes:
 | Nuvem exportada | `limpar`, `mesclar` | PLY exportado do Revo Scan | Open3D |
 | Malha | `malha` | PLY já limpo | Open3D |
 | CloudCompare | `cc limpar`, `cc deriva` | PLY | CloudCompare instalado |
-| Projeto do Revo Scan | `revo info`, `revo limpar`, `revo fundir`, `revo giro`, `revo aplicar` | pasta do projeto (`.revo`) | só numpy e scipy |
+| Projeto do Revo Scan | `revo info`, `revo limpar`, `revo fundir`, `revo giro`, `revo aplicar` | pasta do projeto (`.revo`) | Open3D só no `revo limpar` |
 
 Pipeline determinística: a LLM saiu do caminho crítico e virou inspetora opcional.
 
@@ -44,11 +44,11 @@ python run.py cc deriva limpo.ply --saida sem_deriva.ply [--suporte 500]
 
 # Projeto do Revo Scan, quadro a quadro (o original NUNCA é alterado)
 python run.py revo info <projeto> [--calibrar]
-python run.py revo limpar <projeto> --scans 20261017_172640
+python run.py revo limpar <projeto> --scans 20261017_172640          # limpa quadro a quadro e propõe correção de pose
 python run.py revo fundir <projeto> --scan 20261015_204805 --saida nuvem.ply [--correcao correcao.json]
 python run.py revo giro <projeto> --scan S --ref 0-69 --alvo 148-247 --rampa 70-147 \
     --centro X,Y,Z --raio 22.91 --altura 46 [--base-de raw_preview_relatorio.json] --saida pasta/
-python run.py revo aplicar <projeto> --correcao pasta/correcao.json
+python run.py revo aplicar <projeto> --correcao pasta/correcao.json   # aceita a correção do giro e a do limpar
 ```
 
 Código de saída de `limpar` e `mesclar`: 0 = aprovado, 2 = revisar. Dá para usar em lote.
@@ -119,8 +119,24 @@ Lê o `cache/frames.dataset` (SQLite com assinatura trocada) quadro a quadro. O 
 
 - `info`: quadros, modos, quadros com profundidade e os maiores saltos de pose, com o número que o Revo Scan mostra.
   Use para achar o trecho suspeito e conferir no Revo Scan antes de mexer.
-- `limpar`: calibra cada modo contra o `raw_preview.ply` (pula o scan se o erro passar de 0,6 mm), acha o prato,
-  escolhe a peça pela mira da câmera e apaga de cada quadro os pixels fora dela. Poses intactas.
+- `limpar`: atua direto nos quadros do projeto, com o mesmo motor da limpeza de PLY. Código de saída 0 = aprovado, 2 = revisar.
+  1. Calibra cada modo contra o `raw_preview.ply` (pula o scan se o erro passar de 0,6 mm) e acha o prato pelas câmeras.
+  2. Funde TODOS os quadros numa grade de voxels (nuvem de trabalho de até cerca de 400 mil pontos), lembrando de que
+     voxel veio cada pixel.
+  3. Roda o motor: ruído, ilhas, trechos deslocados, busca de parâmetros. A peça é o objeto que mais aparece no centro
+     da imagem. Um objeto separado só é tratado como trecho deslocado se a maior parte dos pontos dele vem de quadros
+     que quase não veem a peça (objeto de apoio aparece junto com a peça; trecho com deriva vem de quadros perdidos).
+  4. Cada pixel herda o rótulo do voxel. Na cópia, os pixels removidos são apagados de cada quadro. Poses intactas.
+  5. Trecho realinhado com encaixe confiável: os quadros cuja maioria dos pontos caiu nele vão para
+     `<scan>_correcao.json` (pose nova = T do encaixe @ pose), com `<scan>_fusao_antes.ply` e `<scan>_fusao_corrigida.ply`
+     para conferir o detalhe não simétrico. A pose só é gravada com `revo aplicar` sobre a cópia limpa.
+  6. Encaixe ambíguo: nada é corrigido, os pixels do trecho são apagados e o relatório lista os quadros (número do Revo)
+     para você conferir e excluir no Revo Scan. Sai também `<scan>_trechoN_sugestao.ply`.
+
+  Teste com gabarito (deriva injetada de 25 graus e 70 mm nos quadros 0 a 40 do scan de 15/10 já corrigido): achou
+  exatamente os 41 quadros; depois do `aplicar`, erro de pose de 0,27 mm no centro da peça e os outros quadros intactos.
+  Limite: só pega deriva que separa o trecho da peça (vão entre eles). Deriva gradual, em que o trecho fica encostado
+  na peça (como o giro de 17,2 graus de 15/10), não é detectada: use `giro`.
 - `giro` + `aplicar`: deriva de giro em torno do eixo de peça cilíndrica (trecho cego). Duas etapas de propósito:
   `giro` só estima e grava `correcao.json` com `fusao_original.ply` e `fusao_corrigida.ply`; `aplicar` grava a cópia
   depois que você conferir o detalhe não simétrico (plugue) contra o gabarito. Distância média à superfície não prova

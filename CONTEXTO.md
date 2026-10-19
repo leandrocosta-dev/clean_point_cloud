@@ -74,3 +74,11 @@ Responder em portugues do Brasil, direto, sem bajulacao, maxima especificidade. 
 - Correcao de bug: `mesclar` mesclava encaixe ambiguo. Agora recusa (status ambiguo, saida 2).
 - Problema conhecido: `limpar` em PLY real nao e reprodutivel (paralelismo do Open3D). Na mesma entrada, o trecho do raw_preview de 15/10 saiu realinhado numa execucao e ambiguo em outra.
 - frameFlag.json de cada scan tem `disabled_index: []`. Provavel mecanismo do Revo Scan para excluir quadros; NAO confirmado.
+
+## REVO LIMPAR DIRETO NOS QUADROS COM O MOTOR DO PLY (19/10)
+- Pedido do usuario: o sistema atua na nuvem original do projeto (quadros do frames.dataset), nao num PLY exportado. Quadros com deriva: corrigir a pose (decisao do usuario), sempre em duas etapas. Frente PLY mantida.
+- `revo limpar`: funde todos os quadros em grade de voxels (trabalho de cerca de 400 mil pontos), roda o mesmo motor do PLY (ruido, ilhas, trechos, Optuna), devolve o rotulo para cada pixel e apaga os removidos na copia. Peca = objeto mais visto no centro da imagem. Objeto separado so vira candidato a trecho se mais da metade dos pontos dele vem de quadros com menos de 20% dos pontos na peca (apoio e visto junto com a peca).
+- Trecho realinhado: quadros com maioria dos pontos nele vao para <scan>_correcao.json (tipo quadros, pose = T @ pose) + fusoes antes/corrigida. Gravar so com `revo aplicar` sobre a copia limpa, depois de conferir o plugue. Encaixe ambiguo: pixels do trecho apagados, quadros listados (numero Revo) para excluir no Revo Scan.
+- Teste com gabarito no 20261015_204805 (copia com o giro corrigido, deriva injetada de 25 graus + 70 mm nos quadros 0-40): achou exatamente os 41 quadros; T proposta com erro de 0,24 grau; apos aplicar, erro de 0,27 mm no centro da peca; demais quadros intactos. Original intacto (hash).
+- No projeto 15/10 (copia _Limpo) o prato nao foi achado (ja limpo); 70% do raw_preview nao existe nos quadros, por isso o preview filtrado cai de 119.851 para cerca de 30 mil pontos (correto).
+- Limite: so detecta deriva que separa o trecho da peca. Deriva gradual com o trecho encostado (giro de 15/10) nao e detectada; continua com `revo giro`. Caminho de objeto de apoio e de prato achado nao foi testado nesta maquina (so ha o projeto de 15/10).

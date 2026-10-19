@@ -11,11 +11,11 @@ CloudCompare em linha de comando:
 
 Projeto do Revo Scan quadro a quadro (o original nunca e alterado):
     python run.py revo info <projeto> [--calibrar]
-    python run.py revo limpar <projeto> --scans 20261017_172640
+    python run.py revo limpar <projeto> --scans 20261017_172640 [--config cfg.json] [--faixa-base 2.5]
     python run.py revo fundir <projeto> --scan S --saida nuvem.ply [--correcao correcao.json]
     python run.py revo giro <projeto> --scan S --ref 0-69 --alvo 148-247 --rampa 70-147 \\
         --centro X,Y,Z --raio 22.9 --altura 46 [--base-de raw_preview_relatorio.json] --saida pasta/
-    python run.py revo aplicar <projeto> --correcao pasta/correcao.json
+    python run.py revo aplicar <projeto> --correcao pasta/correcao.json   (de 'revo giro' ou de 'revo limpar')
 """
 import argparse
 import functools
@@ -104,7 +104,9 @@ def cmd_revo_info(a):
 
 def cmd_revo_limpar(a):
     from moviai_scan.revo.limpeza import limpar_projeto
-    limpar_projeto(a.projeto, a.scans, a.saida, log)
+    cfg = Config.load(a.config) if a.config else Config()
+    _, rel = limpar_projeto(a.projeto, a.scans, a.saida, cfg, a.faixa_base, log)
+    return 0 if all(r["status"] == "aprovado" for r in rel.values()) else 2
 
 
 def cmd_revo_fundir(a):
@@ -196,10 +198,13 @@ def parser():
     p.add_argument("--calibrar", action="store_true", help="ajusta a calibracao de cada modo")
     p.add_argument("--saltos", type=int, default=8)
     p.set_defaults(func=cmd_revo_info)
-    p = rv.add_parser("limpar", help="copia do projeto com prato e pecas de apoio apagados dos quadros")
+    p = rv.add_parser("limpar", help="copia do projeto limpa quadro a quadro (prato, apoio, ruido, ilhas, "
+                                     "trechos com deriva) + correcao de pose proposta")
     p.add_argument("projeto")
     p.add_argument("--scans", nargs="+", required=True)
     p.add_argument("--saida")
+    p.add_argument("--config", help="JSON do motor de limpeza (mesmo formato do 'limpar' de PLY)")
+    p.add_argument("--faixa-base", type=float, default=2.5, help="altura sobre o prato tratada como prato (mm)")
     p.set_defaults(func=cmd_revo_limpar)
     p = rv.add_parser("fundir", help="funde os quadros de um scan numa nuvem PLY")
     p.add_argument("projeto")

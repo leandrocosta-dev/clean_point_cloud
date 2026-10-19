@@ -72,8 +72,14 @@ def detect_base(pts, spacing, P, mode, seed):
     return {"n": n.tolist(), "d": float(d), "band": float(band), "n_inliers": int(len(inl))}
 
 
-def run_clean(pts, spacing, P, cfg, align=True):
-    """Executa a limpeza. Retorna (labels, info, transforms{k: T})."""
+def run_clean(pts, spacing, P, cfg, align=True, base_fixa=None, escolher=None):
+    """Executa a limpeza. Retorna (labels, info, transforms{k: T}).
+
+    base_fixa: dict(n, d, band) ja conhecido (ex.: prato achado pelas cameras no projeto Revo);
+        substitui a deteccao.
+    escolher(idx, cl, sizes) -> (id do cluster principal, ids candidatos a trecho em ordem de tamanho).
+        Padrao: o maior cluster e a peca e todos os outros sao candidatos.
+    """
     o3d.utility.random.seed(cfg.seed)
     n = len(pts)
     labels = np.full(n, MAIN, int)
@@ -81,7 +87,7 @@ def run_clean(pts, spacing, P, cfg, align=True):
     transforms = {}
 
     # 1. Base
-    base = detect_base(pts, spacing, P, cfg.base_mode, cfg.seed)
+    base = base_fixa if base_fixa is not None else detect_base(pts, spacing, P, cfg.base_mode, cfg.seed)
     info["base"] = base
     if base:
         sd = pts @ np.array(base["n"]) + base["d"]
@@ -105,15 +111,18 @@ def run_clean(pts, spacing, P, cfg, align=True):
         info["erro"] = "DBSCAN nao encontrou nenhum cluster"
         return labels, info, transforms
     sizes = np.bincount(cl[cl >= 0])
-    order = np.argsort(sizes)[::-1]
-    main_id = order[0]
+    if escolher:
+        main_id, candidatos = escolher(idx, cl, sizes)
+    else:
+        order = np.argsort(sizes)[::-1]
+        main_id, candidatos = order[0], order[1:]
     labels[idx[cl != main_id]] = CLUSTER
     main_pts = pts[idx[cl == main_id]]
     info["n_clusters"] = int(len(sizes))
 
     # 4. Trechos deslocados
     k = 0
-    for i, cid in enumerate(order[1:]):
+    for i, cid in enumerate(candidatos):
         if sizes[cid] < P.fragment_min_frac * sizes[main_id]:
             break
         fidx = idx[cl == cid]
