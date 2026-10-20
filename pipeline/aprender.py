@@ -58,8 +58,9 @@ def _extrair_um(args):
     from revo_projeto import RevoScan, ler_ply
     import open3d as o3d
     t0 = time.time()
+    sc = None
     try:
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             sc = RevoScan(pasta, tmp)
             erros = {}
             for m in sorted(set(int(x) for x, p in zip(sc.modo, sc.tem_prof) if p)):
@@ -106,6 +107,9 @@ def _extrair_um(args):
         return proj, sid, f"ok fitness {fit:.2f}"
     except Exception as e:
         return proj, sid, f"ERRO {type(e).__name__}: {e}"
+    finally:
+        if sc is not None:
+            sc.c.close()
 
 
 def cmd_extrair(a):
@@ -195,6 +199,53 @@ def cmd_avaliar(a):
         json.dump(res, open(a.saida, "w", encoding="utf-8"), indent=1)
 
 
+def _perdas_um(args):
+    """Onde estao os pontos do fuse que a variante perde: na faixa do plano (mesa) ou acima (peca)?"""
+    f, variante = args
+    from revo_projeto import segmentar_peca, mascara_manter
+    A, E, miras, F, meta = carregar(os.path.join(CACHE, f))
+    if meta["fitness"] < FITNESS_GT or len(F) == 0:
+        return None
+    base, *extras = variante.split(",")
+    kw = {k: (v if k == "selecao" else float(v)) for k, v in (x.split("=") for x in extras)}
+    if base == "plano":
+        modo, kw["cruza_max"] = "plano", 9.0
+    elif base == "sem_base":
+        modo = "sem"
+    else:
+        modo, kw["cruza_max"] = "auto", float(base.split("_")[1])
+    seg = segmentar_peca(None, amostra=(A.astype(float), miras.astype(float)), transitorio=False,
+                         log=lambda *x: None, modo_base=modo, **kw)
+    keep = mascara_manter(E.astype(float), seg)
+    # plano de referencia (RANSAC) para classificar altura, mesmo no modo sem base
+    n, d, _ = __import__("revo_projeto").plano_ransac(A[:: max(1, len(A) // 40000)].astype(float), thr=1.0, it=800)
+    d_keep = cKDTree(E[keep]).query(F, workers=-1)[0] if keep.any() else np.full(len(F), 9e9)
+    perdido = d_keep > 0.6
+    hF = F @ n + d
+    # so conta o que o proprio conjunto E enxerga (cobertura): ignora pontos do fuse sem nenhum ponto E perto
+    cob = cKDTree(E).query(F, workers=-1)[0] < 0.6
+    perdido &= cob
+    tot = max(1, cob.sum())
+    return dict(proj=meta["proj"], scan=meta["scan"], perda=float(perdido.sum() / tot),
+                perda_acima=float((perdido & (hF > 3)).sum() / tot), perda_faixa=float((perdido & (np.abs(hF) <= 3)).sum() / tot),
+                fuse_acima=float((cob & (hF > 3)).sum() / tot))
+
+
+def cmd_perdas(a):
+    arqs = sorted(f for f in os.listdir(CACHE) if f.endswith(".npz"))
+    with ProcessPoolExecutor(a.jobs) as ex:
+        r = [x for x in ex.map(_perdas_um, [(f, a.variante) for f in arqs]) if x]
+    r.sort(key=lambda x: -x["perda"])
+    print(f"variante {a.variante}: {len(r)} scans")
+    print(f"{'scan':<42}{'perda':>7}{'acima plano':>13}{'na faixa':>10}{'fuse acima':>12}")
+    for x in r[:a.topo]:
+        print(f"{x['proj'][-15:]+'/'+x['scan'][-15:]:<42}{x['perda']*100:6.1f}%{x['perda_acima']*100:12.1f}%{x['perda_faixa']*100:9.1f}%{x['fuse_acima']*100:11.1f}%")
+    pa = np.array([x["perda_acima"] for x in r]); pf = np.array([x["perda_faixa"] for x in r]); pt = np.array([x["perda"] for x in r])
+    print(f"media: perda {pt.mean()*100:.1f}% (acima do plano {pa.mean()*100:.1f}% | na faixa {pf.mean()*100:.1f}%) | scans com perda ACIMA > 10%: {(pa>0.10).sum()}")
+    if a.saida:
+        json.dump(r, open(a.saida, "w", encoding="utf-8"), indent=1)
+
+
 def main():
     ap = argparse.ArgumentParser()
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -205,8 +256,13 @@ def main():
     v.add_argument("--variantes", nargs="+", default=["plano", "sem_base", "auto_0.10"])
     v.add_argument("--saida")
     v.add_argument("--jobs", type=int, default=4)
+    pe = sub.add_parser("perdas")
+    pe.add_argument("--variante", default="plano")
+    pe.add_argument("--topo", type=int, default=25)
+    pe.add_argument("--jobs", type=int, default=6)
+    pe.add_argument("--saida")
     a = ap.parse_args()
-    {"extrair": cmd_extrair, "avaliar": cmd_avaliar}[a.cmd](a)
+    {"extrair": cmd_extrair, "avaliar": cmd_avaliar, "perdas": cmd_perdas}[a.cmd](a)
 
 
 if __name__ == "__main__":

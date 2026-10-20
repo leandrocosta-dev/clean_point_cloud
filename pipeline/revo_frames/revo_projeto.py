@@ -70,7 +70,7 @@ def plano_ransac(P, thr=1.0, it=3000, seed=0):
     n, d = best[1]
     m = np.abs(P @ n + d) < thr
     c = P[m].mean(0)
-    _, _, V = np.linalg.svd(P[m] - c)
+    _, _, V = np.linalg.svd(P[m] - c, full_matrices=False)
     n = V[2]
     d = -n @ c
     # orienta a normal para o lado onde estao os objetos
@@ -242,6 +242,14 @@ def persistencia(scan, centros, voxel, nquadros=120, tol_hit=None, tol_free=None
 
 
 # ---------------------------------------------------------------- segmentacao da peca
+def _caixa(mask, pad):
+    """Fatias da caixa que envolve os True de `mask`, com folga `pad` (limitada a grade)."""
+    idx = np.argwhere(mask)
+    lo = np.maximum(idx.min(0) - pad, 0)
+    hi = np.minimum(idx.max(0) + pad + 1, mask.shape)
+    return tuple(slice(int(a), int(b)) for a, b in zip(lo, hi))
+
+
 def cruzamento_base(A, n, d, celula=2.0, dens_rel=0.25, folga=3.0):
     """Fracao das celulas ocupadas pela peca (acima do plano) que tambem tem material DENSO abaixo dele.
 
@@ -365,8 +373,16 @@ def segmentar_peca(scan, voxel=1.0, faixa_base=1.2, passo=6, log=print,
     # mesmo sem voto de mira. Marcadores sao pequenos (~6 mm) e ficam de fora.
     # Em cena suja (braco, blocos encostados) so entra o que esta DENTRO da caixa da peca, como o
     # cubo central; objeto que se estende para fora dela e do ambiente, nao da peca.
-    dist_peca = ndimage.distance_transform_edt(~np.isin(rot, partes))
-    nuc = np.argwhere(np.isin(rot, partes))
+    # A distancia so interessa perto da peca: calcula numa caixa em volta dela (cenas grandes tem
+    # grades de centenas de milhoes de voxels e a transformada de distancia inteira leva minutos).
+    def so_partes():
+        tab = np.zeros(ncomp + 1, bool)
+        tab[partes] = True
+        return tab[rot]
+    pm = so_partes()
+    caixa = _caixa(pm, int(np.ceil(colado_mm / voxel)) + 2)
+    dist_sub = ndimage.distance_transform_edt(~pm[caixa])
+    nuc = np.argwhere(pm)
     nlo, nhi = nuc.min(0) - int(round(3 / voxel)), nuc.max(0) + int(round(3 / voxel))
     for c, sl in enumerate(ndimage.find_objects(rot), start=1):
         if c in partes or sl is None:
@@ -374,15 +390,23 @@ def segmentar_peca(scan, voxel=1.0, faixa_base=1.2, passo=6, log=print,
         ext = max(s.stop - s.start for s in sl) * voxel
         if ext < ext_min_mm:
             continue
-        sub = rot[sl] == c                   # so a caixa do objeto, nao o volume inteiro
-        vc = np.argwhere(sub) + np.array([s.start for s in sl])
+        inter = tuple(slice(max(a.start, b.start), min(a.stop, b.stop)) for a, b in zip(sl, caixa))
+        if any(i.stop <= i.start for i in inter):
+            continue                          # longe da peca: nao esta colado
+        loc = tuple(slice(i.start - b.start, i.stop - b.start) for i, b in zip(inter, caixa))
+        no_c = rot[inter] == c
+        if not no_c.any() or dist_sub[loc][no_c].min() * voxel > colado_mm:
+            continue
+        vc = np.argwhere(rot[sl] == c) + np.array([x.start for x in sl])
         dentro = np.all((vc >= nlo) & (vc <= nhi), axis=1).mean()
-        if dist_peca[sl][sub].min() * voxel <= colado_mm and dentro >= 0.9:
+        if dentro >= 0.9:
             partes.append(c)
     # Limpeza branda: mantem tudo que esta a ate `margem_mm` da peca e remove so o que esta longe
     # (marcadores, prato distante, apoios).
-    nucleo = np.isin(rot, partes)
-    manter = ndimage.distance_transform_edt(~nucleo, sampling=voxel) <= margem_mm
+    nucleo = so_partes()
+    cx = _caixa(nucleo, int(np.ceil(margem_mm / voxel)) + 2)
+    manter = np.zeros(nucleo.shape, bool)
+    manter[cx] = ndimage.distance_transform_edt(~nucleo[cx], sampling=voxel) <= margem_mm
     # Pegada da peca no plano da base: sob ela, a face de baixo encosta no prato e nao e cortada.
     u = np.cross(n, [1.0, 0, 0]); u /= np.linalg.norm(u)
     v = np.cross(n, u)

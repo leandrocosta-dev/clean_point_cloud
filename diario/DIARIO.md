@@ -29,3 +29,21 @@ Metricas: **recall** = parte do fuse.ply que continua nos quadros limpos (perder
 - `20260403_085043`: escolheu o objeto de 6,6 mil pontos (11 miras) em vez do de 653 mil pontos (0 miras) que contem 94% do fuse. Recall do fuse 7,5%.
 - Mesma causa provavel: `084717` do projeto 1011 (3% mantido) e varios scans do 1011.
 - Hipotese: o maior componente deve vencer quando domina a cena; os votos so desempatam entre candidatos comparaveis ("hibrido"). Testado em `aval_02.json`.
+
+## Resultado da avaliacao 02 (112 scans com gabarito, `aval_02.json`)
+| variante | recall medio do fuse | p5 | scans que perdem >10% | lixo |
+|---|---|---|---|---|
+| plano + votos (regra v0.1) | 62,6% | 4% | 86 | 6,7% |
+| plano + maior componente | 67,4% | 18% | 84 | 6,7% |
+| plano + hibrido (dom. 0,5) | 65,9% | 15% | 86 | 6,9% |
+| auto (cruzamento<=0,10) + hibrido | 70,6% | 15% | 69 | 7,1% |
+| **sem base + hibrido** | **95,8%** | **80%** | **14** | **3,1%** |
+- A regra de v0.1 corta >10% do que o Revo fundiu em 86 de 112 scans. Os bons resultados dos primeiros projetos (1017, 0924) eram a excecao (mesa giratoria bem definida).
+- `perdas_plano.json`: da perda da regra v0.1, em media 25,3% e "na faixa do plano" e 5,8% e "acima do plano". Muitos scans (todos os `golf`, `20260927_2218xx`) tem o fuse INTEIRO rente ao plano: a peca e achatada/baixo-relevo e o RANSAC pegou a propria peca como mesa. Apagar o plano apaga o scan.
+- 21 scans perdem >10% ACIMA do plano (5 perdem >50%): selecao errada do componente.
+- O cruzamento do plano sozinho NAO separa mesa de peca achatada (auto_0.10 melhora pouco). Precisa de mais sinais.
+
+## Aprendizado 3 - dois gargalos de velocidade (v0.3)
+- `np.linalg.svd(..., full_matrices=False)` no RANSAC do plano: a versao completa montava uma matriz N x N (13 GB para 40 mil pontos). Ganho: de minutos para 0,07 s. Vale tambem para a limpeza de producao.
+- Transformada de distancia 3D so numa caixa em volta da peca (grade da cena pode ter centenas de milhoes de voxels). Resultado identico (conferido: mesmo % mantido), de minutos para 2-8 s por variante.
+- Cache de amostras: 321 scans, 7 GB (`aprendizado/cache`, fora do git). 9 scans nao tem nenhum quadro com profundidade e ficam de fora.
