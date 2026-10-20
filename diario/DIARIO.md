@@ -55,3 +55,25 @@ Metricas: **recall** = parte do fuse.ply que continua nos quadros limpos (perder
 - Quando o plano e inofensivo (22 de 112 scans) ele limpa so 0,28% de pontos a mais em media (max 36%, mesas giratorias grandes). Ganho pequeno, risco alto.
 - Decisao: o padrao passa a ser **sem base + selecao hibrida**. O plano nao decide mais nada sozinho. Tentativa seguinte (aval_03): usar o plano apenas como "periferia da mesa" (faixa do plano longe da peca) e so se a peca tem altura real acima dele.
 - Hipotese de causa da falha das caracteristicas: a mesma geometria (grande plano + peca em cima) aparece em mesa giratoria e em peca achatada sobre bancada; so o contexto de captura (rotacao da mesa, movimento da camera) diferencia. Ideia futura: usar o movimento das poses (camera orbitando a peca) como sinal.
+
+## Aprendizado 5 - o plano nao pode decidir nada; "periferia da mesa" tambem nao (`aval_03.json`)
+- Melhor regra por caracteristica = nunca usar o plano (ver aprendizado 4). Padrao novo: **sem base**.
+- Teste da "periferia da mesa" (apagar a faixa do plano longe da peca, so quando a peca tem altura): recall cai de 95,8% para 86,7%..93,3% em todas as configuracoes (saldo sempre negativo).
+- Ressalva importante: o `fuse.ply` do Revo inclui a base plana da peca (ex.: placa com cupulas do `194310`); o gabarito NAO consegue validar remocao de mesa. Decisao: remocao de mesa fica como opcao explicita (`periferia_mm`), desligada por padrao. O padrao so remove o que esta solto, longe ou isolado.
+
+## Aprendizado 6 - a peca aparece partida em varios componentes grandes (`aval_04.json`)
+- Causa dos piores cortes do modo sem base (`164145`, `golf/183319`, `180335`): amostra esparsa e fendas partem a peca; o codigo so mantinha componentes com voto da mira. O fuse tinha 664x606x349 mm e o mantido 289x237 mm.
+- Correcao: `grandes_frac` = todo componente com >= x do maior entra, com ou sem voto.
+| grandes_frac | recall | p5 | scans <90% | lixo |
+|---|---|---|---|---|
+| 0 (antes) | 95,79% | 80% | 14 | 3,07% |
+| **0,02** | **98,76%** | **93%** | **4** | 5,02% |
+| 0,05 | 97,98% | 88% | 8 | 4,00% |
+| 0,10 | 97,78% | 87% | 10 | 3,46% |
+| 0,35 | 96,75% | 84% | 12 | 3,23% |
+- Escolhido 0,02: perder peca estraga a malha; sobra solta se limpa depois. Custo: mais pontos soltos mantidos (lixo 3,1% -> 5,0%).
+
+## Aprendizado 7 - busto sem mesa (caso reportado) resolvido
+- `Project_Example` com os padroes novos: 100% dos pontos mantidos (so saem pixels voadores e a ilha de ruido abaixo do busto). Antes (v0.1) cortava tudo abaixo do plano.
+
+## Estado: v0.5 - padrao = sem base + selecao hibrida (dominancia 0,5) + componentes grandes (0,02) + filtro de pixels + ilhas 2%

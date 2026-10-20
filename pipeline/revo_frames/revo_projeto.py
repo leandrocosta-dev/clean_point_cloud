@@ -272,8 +272,8 @@ def cruzamento_base(A, n, d, celula=2.0, dens_rel=0.25, folga=3.0):
 def segmentar_peca(scan, voxel=1.0, faixa_base=1.2, passo=6, log=print,
                    min_votos_frac=0.5, min_tam_frac=0.05, ext_min_mm=15.0, colado_mm=5.0,
                    margem_mm=4.0, transitorio=True, trans_min_free=3, trans_razao=1.0,
-                   trans_viz=5, trans_dens=0.6, amostra=None, modo_base="auto", cruza_max=0.10,
-                   selecao="votos", dominancia=0.5, periferia_mm=0.0, per_altura=15.0, per_banda=2.5):
+                   trans_viz=5, trans_dens=0.6, amostra=None, modo_base="sem", cruza_max=0.10,
+                   selecao="hibrido", dominancia=0.5, periferia_mm=0.0, per_altura=15.0, per_banda=2.5, grandes_frac=0.02):
     """Separa a peca do prato e das pecas de apoio.
 
     1. Funde uma amostra de todos os quadros no referencial do mundo.
@@ -369,7 +369,10 @@ def segmentar_peca(scan, voxel=1.0, faixa_base=1.2, passo=6, log=print,
     # estreita). Mantem toda componente grande e bem mirada, nao so a mais votada.
     # Marcadores e apoios pequenos tem ~0 votos e ficam de fora.
     partes = [c for c in range(1, ncomp + 1)
-              if c == peca or (votos[c] >= min_votos_frac * votos[peca] and tam[c] >= min_tam_frac * tam[peca])]
+              if c == peca or (votos[c] >= min_votos_frac * votos[peca] and tam[c] >= min_tam_frac * tam[peca])
+              # a peca costuma aparecer partida em varios componentes grandes (amostra esparsa, fendas):
+              # todo componente grande em relacao ao maior tambem entra, com ou sem voto de mira
+              or (grandes_frac > 0 and tam[c] >= grandes_frac * tam[maior])]
     # Componente grande colado na peca (ex.: cubo central separado por uma fresta) tambem e peca,
     # mesmo sem voto de mira. Marcadores sao pequenos (~6 mm) e ficam de fora.
     # Em cena suja (braco, blocos encostados) so entra o que esta DENTRO da caixa da peca, como o
