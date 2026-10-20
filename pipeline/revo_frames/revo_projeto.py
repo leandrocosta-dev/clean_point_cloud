@@ -242,10 +242,30 @@ def persistencia(scan, centros, voxel, nquadros=120, tol_hit=None, tol_free=None
 
 
 # ---------------------------------------------------------------- segmentacao da peca
+def cruzamento_base(A, n, d, celula=2.0, dens_rel=0.25, folga=3.0):
+    """Fracao das celulas ocupadas pela peca (acima do plano) que tambem tem material DENSO abaixo dele.
+
+    Uma mesa/prato de verdade deixa a peca so de um lado: ~0. Um plano que fatia a propria peca
+    (busto, peca sem mesa) tem corpo dos dois lados: valores altos. Material denso = pelo menos
+    `dens_rel` da densidade mediana da peca na mesma celula (ruido espalhado nao conta).
+    """
+    h = A @ n + d
+    u = np.cross(n, [1.0, 0, 0]); u /= np.linalg.norm(u); w = np.cross(n, u)
+    cel = np.floor(np.c_[A @ u, A @ w] / celula).astype(np.int64)
+    key = cel[:, 0] * 1000003 + cel[:, 1]
+    ka, ca = np.unique(key[h > folga], return_counts=True)
+    kb, cb = np.unique(key[h < -folga], return_counts=True)
+    if len(ka) == 0:
+        return 0.0
+    kb = kb[cb >= dens_rel * np.median(ca)]
+    return float(np.isin(kb, ka).sum() / len(ka))
+
+
 def segmentar_peca(scan, voxel=1.0, faixa_base=1.2, passo=6, log=print,
                    min_votos_frac=0.5, min_tam_frac=0.05, ext_min_mm=15.0, colado_mm=5.0,
                    margem_mm=4.0, transitorio=True, trans_min_free=3, trans_razao=1.0,
-                   trans_viz=5, trans_dens=0.6):
+                   trans_viz=5, trans_dens=0.6, amostra=None, modo_base="auto", cruza_max=0.10,
+                   selecao="votos", dominancia=0.5):
     """Separa a peca do prato e das pecas de apoio.
 
     1. Funde uma amostra de todos os quadros no referencial do mundo.
@@ -255,26 +275,35 @@ def segmentar_peca(scan, voxel=1.0, faixa_base=1.2, passo=6, log=print,
        (ponto no eixo optico, na profundidade mediana de cada quadro).
     Retorna um dicionario com o plano, a grade e o conjunto de voxels a manter.
     """
-    ks = [k for k in range(len(scan.ids)) if scan.tem_prof[k]]
-    amostra, miras = [], []
-    for k in ks[:: max(1, len(ks) // 150)]:
-        P, _ = scan.pontos(k, passo=passo)
-        if P is None or len(P) < 100:
-            continue
-        amostra.append(P)
-        T = scan.T[k]
-        eixo = T[:3, :3] @ np.array([0, 0, -1.0])
-        dcam = np.median(np.linalg.norm(P - T[:3, 3], axis=1))
-        miras.append(T[:3, 3] + eixo * dcam)
-    A = np.vstack(amostra)
+    if amostra is not None:
+        A, miras = amostra
+    else:
+        ks = [k for k in range(len(scan.ids)) if scan.tem_prof[k]]
+        lista, miras = [], []
+        for k in ks[:: max(1, len(ks) // 150)]:
+            P, _ = scan.pontos(k, passo=passo)
+            if P is None or len(P) < 100:
+                continue
+            lista.append(P)
+            T = scan.T[k]
+            eixo = T[:3, :3] @ np.array([0, 0, -1.0])
+            dcam = np.median(np.linalg.norm(P - T[:3, 3], axis=1))
+            miras.append(T[:3, 3] + eixo * dcam)
+        A = np.vstack(lista)
     n, d, frac = plano_ransac(A[:: max(1, len(A) // 40000)], thr=1.0, it=800)
+    # O plano e mesa/prato de verdade ou uma fatia da propria peca? Cada projeto e diferente.
+    cruza = cruzamento_base(A, n, d)
+    sem_base = modo_base == "sem" or (modo_base == "auto" and cruza > cruza_max)
+    if sem_base:
+        d = -float((A @ n).min()) + 10.0          # plano virtual abaixo de tudo: nada e cortado por ele
     h = A @ n + d
     acima = A[h > faixa_base]
-    log(f"   base: {frac*100:.0f}% da amostra no plano | {len(acima):,} pontos acima")
+    log(f"   base: {frac*100:.0f}% da amostra no plano | cruzamento {cruza*100:.0f}% -> "
+        f"{'SEM base (plano atravessa a peca)' if sem_base else 'mesa/prato valido'} | {len(acima):,} pontos acima")
 
     # Objetos transitorios (braco, mao, operador): vistos vazios em mais quadros do que ocupados.
     trans = None
-    if transitorio:
+    if transitorio and scan is not None:
         v2 = 2.0
         lo2 = acima.min(0) - 2 * v2
         idx2 = np.floor((acima - lo2) / v2).astype(np.int64)
@@ -317,7 +346,16 @@ def segmentar_peca(scan, voxel=1.0, faixa_base=1.2, passo=6, log=print,
         pts = acima[rot[tuple(idx.T)] == c]
         ext = np.ptp(pts, 0)
         log(f"     objeto {c}: {tam[c]:,} pts | {votos[c]} miras | extensao {ext[0]:.0f} x {ext[1]:.0f} x {ext[2]:.0f} mm")
-    peca = int(np.argmax(votos)) if votos.max() > 0 else int(ordem[0] if ordem[0] else ordem[1])
+    maior = int(ordem[0] if ordem[0] else ordem[1])
+    por_votos = int(np.argmax(votos)) if votos.max() > 0 else maior
+    # selecao: "votos" (onde a camera mais mira), "maior" (maior componente) ou "hibrido": o maior
+    # vence quando domina a cena (>= `dominancia` dos pontos acima da base), senao decidem os votos.
+    if selecao == "maior":
+        peca = maior
+    elif selecao == "hibrido":
+        peca = maior if tam[maior] >= dominancia * tam[1:].sum() else por_votos
+    else:
+        peca = por_votos
     # A peca pode se partir em varias componentes (miolo separado do anel por uma fresta
     # estreita). Mantem toda componente grande e bem mirada, nao so a mais votada.
     # Marcadores e apoios pequenos tem ~0 votos e ficam de fora.
@@ -372,10 +410,13 @@ def segmentar_peca(scan, voxel=1.0, faixa_base=1.2, passo=6, log=print,
         hcol = np.where(vazio, ndimage.maximum_filter(hcol, size=5), hcol)
         vazio = ~np.isfinite(hcol) & pegada
     hcol[~np.isfinite(hcol)] = float(hcent.max())
+    if sem_base:
+        pegada = np.zeros_like(pegada)             # sem prato nao ha "piso" nem "coluna" sob a peca
     exts = {c: tuple(int(round(np.ptp(np.argwhere(rot == c), 0)[i] * voxel)) for i in range(3)) for c in partes}
     log(f"   peca escolhida: objeto {peca} ({votos[peca]} de {ok.sum()} miras) | componentes mantidos: {partes} "
         f"(mm {exts}, votos {[int(votos[c]) for c in partes]}) | margem {margem_mm:g} mm")
     return dict(n=n, d=d, faixa_base=faixa_base, voxel=voxel, lo=lo, manter=manter,
+                sem_base=bool(sem_base), cruza=cruza, frac_plano=float(frac),
                 u=u, v=v, uv_lo=uv_lo, pegada=pegada, hcol=hcol, trans=trans,
                 h_max=float((centros @ n + d).max() + voxel + 1.0),   # marcadores colados ficam acima do topo
                 peca=peca, votos=votos.tolist(), tam=tam.tolist())
