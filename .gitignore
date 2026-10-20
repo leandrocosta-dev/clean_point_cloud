@@ -9,3 +9,11 @@ image*.png
 
 # Pasta de sessao do Claude Code
 .claude/
+
+# Ambiente virtual e caches
+.venv/
+__pycache__/
+*.pyc
+
+# Cache de amostras dos scans (grande, regeneravel)
+aprendizado/cache/
