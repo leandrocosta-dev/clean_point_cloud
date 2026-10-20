@@ -273,7 +273,7 @@ def segmentar_peca(scan, voxel=1.0, faixa_base=1.2, passo=6, log=print,
                    min_votos_frac=0.5, min_tam_frac=0.05, ext_min_mm=15.0, colado_mm=5.0,
                    margem_mm=4.0, transitorio=True, trans_min_free=3, trans_razao=1.0,
                    trans_viz=5, trans_dens=0.6, amostra=None, modo_base="sem", cruza_max=0.10,
-                   selecao="hibrido", dominancia=0.5, periferia_mm=0.0, per_altura=15.0, per_banda=2.5, grandes_frac=0.02):
+                   selecao="hibrido", dominancia=0.5, periferia_mm=0.0, per_altura=15.0, per_banda=2.5, per_abertura=6.0, per_alargue=20.0, grandes_frac=0.02):
     """Separa a peca do prato e das pecas de apoio.
 
     1. Funde uma amostra de todos os quadros no referencial do mundo.
@@ -441,13 +441,26 @@ def segmentar_peca(scan, voxel=1.0, faixa_base=1.2, passo=6, log=print,
     # Periferia da mesa: no modo sem base, a faixa do plano real LONGE da peca e mesa (so quando a peca
     # tem altura de verdade acima do plano; peca achatada nao tem como distinguir de mesa).
     per = None
-    if sem_base and periferia_mm > 0:
+    if sem_base and periferia_mm > 0 and cruza > cruza_max:
+        log(f"   periferia da mesa DESLIGADA: o plano atravessa a peca (cruzamento {cruza*100:.0f}% > {cruza_max*100:.0f}%), nao e mesa")
+    elif sem_base and periferia_mm > 0:
         h_real = centros @ n + d_ref
         alta = h_real > 4.0
         if alta.any() and (h_real.max() >= per_altura):
-            ijf = ij[alta]
+            # Pegada = so o CORPO da peca. O componente da peca costuma vir colado na mesa, e relevos e
+            # marcadores da mesa (>4 mm) entrariam na pegada e a protegeriam. A abertura apaga o que e fino
+            # e o corpo e o que tem altura real; so as manchas 2D que contem corpo ficam.
             fp = np.zeros(pegada.shape, bool)
-            fp[tuple(ijf.T)] = True
+            fp[tuple(ij[alta].T)] = True
+            corpo = np.zeros(pegada.shape, bool)
+            corpo[tuple(ij[h_real > per_altura].T)] = True
+            r = int(round(per_abertura))
+            yy, xx = np.mgrid[-r:r + 1, -r:r + 1]
+            fp = ndimage.binary_opening(np.pad(fp, r + 2), structure=(xx ** 2 + yy ** 2) <= r * r)[r + 2:-(r + 2), r + 2:-(r + 2)]
+            # relevo baixo (4 a `per_altura` mm) so conta como peca ate `per_alargue` mm do corpo: cobre bases
+            # alargadas sem deixar o relevo da mesa, que encosta no corpo, proteger a mesa inteira
+            perto = ndimage.distance_transform_edt(~corpo) <= per_alargue
+            fp = (fp & perto) | ndimage.binary_dilation(corpo, iterations=1)   # o corpo nunca sai da pegada
             fp = ndimage.binary_closing(np.pad(fp, 8), iterations=4)[8:-8, 8:-8]
             dist2 = ndimage.distance_transform_edt(~fp).astype(np.float32)
             per = dict(n=n, d=d_ref, uv_lo=uv_lo, dist=dist2, mm=periferia_mm, banda=per_banda)
@@ -486,6 +499,12 @@ def mascara_manter(P, seg):
     ok = (ok & acima | piso | coluna | (ok & na_pegada & (h > -1.5))) & (h < seg["h_max"] + 2.0)
     if seg.get("trans") is not None:
         ok &= ~_em_transitorio(P, seg["trans"])
+    # Referencia: a peca fundida pelo proprio Revo Scan (fuse.ply). Tudo que esta perto dela e peca,
+    # inclusive a face de baixo e detalhes que as regras de altura/componente cortariam.
+    if seg.get("ref_arvore") is not None:
+        d, _ = seg["ref_arvore"].query(P, distance_upper_bound=seg["ref_margem"], workers=THREADS)
+        ok |= np.isfinite(d)
+    # A periferia da mesa vale por ultimo: o fuse.ply do Revo inclui a mesa e nao pode ressuscita-la.
     per = seg.get("periferia")
     if per is not None:
         hr = P @ per["n"] + per["d"]
@@ -498,11 +517,6 @@ def mascara_manter(P, seg):
             kill = np.zeros(len(P), bool)
             kill[np.flatnonzero(faixa)] = dd > per["mm"]
             ok &= ~kill
-    # Referencia: a peca fundida pelo proprio Revo Scan (fuse.ply). Tudo que esta perto dela e peca,
-    # inclusive a face de baixo e detalhes que as regras de altura/componente cortariam.
-    if seg.get("ref_arvore") is not None:
-        d, _ = seg["ref_arvore"].query(P, distance_upper_bound=seg["ref_margem"], workers=THREADS)
-        ok |= np.isfinite(d)
     return ok
 
 

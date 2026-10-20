@@ -77,3 +77,23 @@ Metricas: **recall** = parte do fuse.ply que continua nos quadros limpos (perder
 - `Project_Example` com os padroes novos: 100% dos pontos mantidos (so saem pixels voadores e a ilha de ruido abaixo do busto). Antes (v0.1) cortava tudo abaixo do plano.
 
 ## Estado: v0.5 - padrao = sem base + selecao hibrida (dominancia 0,5) + componentes grandes (0,02) + filtro de pixels + ilhas 2%
+
+## Sessao 2026-10-19/20 (projeto `Project20260613_160228`, painel de carro) - o que NAO repetir
+- LER ESTE DIARIO E `git log` ANTES DE QUALQUER INVESTIGACAO. Uma sessao redescobriu do zero o formato do frames.dataset (SQLite com magic `RPAlgo_file_sys`, mascara LSB + floats) que ja estava na v0.1 e perdeu horas.
+- O usuario exige limpar **nos quadros** (`frames.dataset`) e entregar o `.revo` completo. Limpar `fuse.ply`/`fuse_mesh.ply`/`raw_preview.ply` nao serve: o Revo Scan abriu a copia e mostrou a nuvem igual a original (ele refunde dos quadros e nao grava nada na pasta). `build_revo_project.py` e `clean_revo.py` (so .ply) sao beco sem saida para a entrega; nao usar.
+- Ambiente: CloudCompare nao instalado (`Clean-PointCloud.ps1` nao roda). 24 threads. `scatter` do matplotlib em nuvem grande estourou a memoria e travou o Claude Code (Bun) 2x: usar `histogram2d`.
+- Rodar: `.venv/Scripts/python.exe -I pipeline/limpar_raw.py <projeto> --saida <pasta nova>`.
+
+## Aprendizado 8 - remocao de mesa nos quadros (`--periferia-mm`), com auditoria independente do fuse (2026-10-20, projeto `Project20260613_160228`)
+- Sintoma: padrao v0.5 deixa a mesa inteira (95-99% dos pontos mantidos). Nos scans 161826/162307 o "objeto" da peca media 724x680 mm e 785x556 mm, mas a peca tem ~320x300 mm: o componente da peca vem COLADO na mesa.
+- Causa de a 1a tentativa de periferia falhar (so ~20% a menos): a pegada era calculada com todos os voxels do componente acima de 4 mm do plano; relevo e marcadores da mesa entravam na pegada e a protegiam. Correcao: pegada = so o CORPO (h > `per_altura` 15 mm) + relevo baixo ate `per_alargue` mm do corpo (cobre base alargada), com abertura morfologica; corte vale por ULTIMO (depois da referencia do fuse, que inclui a mesa e a ressuscitaria); trava: so quando o plano NAO atravessa a peca (cruzamento <= 0,10).
+- `pipeline/auditar_limpeza.py` compara original x limpo pixel a pixel (sem fuse.ply) e mede o que foi removido por altura acima da mesa, os removidos dentro da coluna vertical do corpo mantido e a distancia 3D deles ate a superficie mantida.
+- ARMADILHA da auditoria: `RevoScan.pontos(k, passo=N)` escolhe indices dentro da lista de pixels VALIDOS; apos a limpeza a lista encolhe e a amostra desloca (parecia que 50% do corpo foi cortado, era artefato). Comparar sempre com passo=1.
+- Resultado (periferia 8 mm, banda 12, alargue 20): removido acima de 15 mm = 0,8-0,9% (so filtros de pixel voador padrao); a mais que a v0.5 acima de 15 mm = 4.141 e 3 pontos, zero dentro da coluna do corpo; mesa ate 4 mm: 85% removida; sobra colar de ~25-30 mm.
+- Risco NAO medido: o Revo Scan pode precisar da geometria da mesa/marcadores para registrar/fundir (ver docstring de `limpar_fuse`). So o usuario testa abrindo o `.revo` e fundindo.
+- Rodada final (`--periferia-mm 5 --periferia-banda 12 --periferia-alargue 10`, projeto inteiro): 160310 manteve 94,4% (periferia DESLIGADA pela trava: cruzamento 24%; extensao final 321x304x261 mm = a peca); 161826 56% (335x347x232); 162307 44% (365x301x286). Auditoria: acima de 15 mm a mais que a v0.5 = 0 / 4.141 / 3 pontos; 4.141 sao 0,1% do corpo, a <=1 mm da superficie mantida (cobertura duplicada, geometria preservada).
+- Comando de producao usado: `python pipeline/limpar_raw.py <projeto> --periferia-mm 5 --periferia-banda 12 --periferia-alargue 10 --saida <pasta>` e depois `python pipeline/auditar_limpeza.py <original> <limpo> <scan> --referencia <limpeza v0.5>`.
+- Em aberto: (1) o Revo Scan fundir bem sem a mesa/marcadores; (2) testar em outros projetos de `D:\Projects` (so 1 projeto validado); (3) tornar a periferia padrao so depois de rodar `aprender.py` com a nova regra; (4) origem dos 4.141 pontos de corpo a mais removidos em 161826.
+
+### Validacao no Revo Scan (2026-10-20)
+O usuario abriu `Project20260613_160228_limpo_sem_mesa` (limpo nos frames com `--periferia-mm 5 --periferia-banda 12 --periferia-alargue 10`), refez a fusao e a malha saiu perfeita. Ou seja: o Revo funde bem sem a mesa e sem os marcadores neste projeto. Validado em 1 projeto (3 scans); falta rodar `aprender.py` nos demais antes de tornar a periferia padrao.

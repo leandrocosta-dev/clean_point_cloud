@@ -34,7 +34,7 @@ def copiar_intacto(proj, saida, s):
     shutil.copytree(os.path.join(proj, "data", s), os.path.join(saida, "data", s))
 
 
-def processar(proj, s, saida, pixels=True, ilhas=True):
+def processar(proj, s, saida, pixels=True, ilhas=True, periferia_mm=0.0, per_banda=2.5, per_alargue=20.0):
     """Limpa um scan (roda num processo proprio). Devolve (id, relatorio, log).
 
     Qualquer scan que nao possa ser limpo com seguranca (sem raw_preview, calibracao ruim, limpeza
@@ -66,7 +66,7 @@ def processar(proj, s, saida, pixels=True, ilhas=True):
                 if max(erros.values()) > ERRO_MAX_CALIB and max(erros.values()) / esp > ERRO_REL_MAX:
                     log.append(f"   PULADO: erro {max(erros.values()):.2f} mm = {max(erros.values())/esp:.2f} x espacamento do preview; copiado sem alteracao")
                     return s, dict(status="pulado", erros=erros), _fechar(scan, proj, saida, s, log)
-                seg = segmentar_peca(scan, log=lambda *a: log.append(" ".join(map(str, a))))
+                seg = segmentar_peca(scan, periferia_mm=periferia_mm, per_banda=per_banda, per_alargue=per_alargue, log=lambda *a: log.append(" ".join(map(str, a))))
                 seg = adicionar_referencia_fuse(scan, seg, log=lambda *a: log.append(" ".join(map(str, a))))
                 r = limpar_scan(scan, seg, os.path.join(saida, "data", s), log=lambda *a: log.append(" ".join(map(str, a))),
                                 pixels=pixels, ilhas=ilhas, min_mantido=MIN_MANTIDO)
@@ -98,6 +98,9 @@ def main():
     ap.add_argument("--saida")
     ap.add_argument("--sem-pixels", action="store_true", help="nao filtra pixels voadores nem manchas 2D")
     ap.add_argument("--sem-ilhas", action="store_true", help="nao remove ilhas 3D soltas")
+    ap.add_argument("--periferia-mm", type=float, default=0.0, help="remove a mesa (faixa do plano) a mais de X mm da pegada da peca; 0 = desligado")
+    ap.add_argument("--periferia-banda", type=float, default=2.5, help="espessura (mm) da faixa do plano removida")
+    ap.add_argument("--periferia-alargue", type=float, default=20.0, help="mm do corpo ate onde o relevo baixo ainda conta como peca (bases alargadas)")
     ap.add_argument("--jobs", type=int, default=0, help="scans em paralelo (0 = automatico)")
     a = ap.parse_args()
     proj = os.path.abspath(a.projeto)
@@ -116,7 +119,8 @@ def main():
     rel = {}
     with ProcessPoolExecutor(jobs) as ex:
         for s, r, log in ex.map(processar, [proj] * len(scans), scans, [saida] * len(scans),
-                                    [not a.sem_pixels] * len(scans), [not a.sem_ilhas] * len(scans)):
+                                    [not a.sem_pixels] * len(scans), [not a.sem_ilhas] * len(scans),
+                                    [a.periferia_mm] * len(scans), [a.periferia_banda] * len(scans), [a.periferia_alargue] * len(scans)):
             print("\n".join(log), flush=True)
             rel[s] = r
     for s in todos:   # scans fora de --scans vao sem alteracao
