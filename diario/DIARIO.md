@@ -47,3 +47,11 @@ Metricas: **recall** = parte do fuse.ply que continua nos quadros limpos (perder
 - `np.linalg.svd(..., full_matrices=False)` no RANSAC do plano: a versao completa montava uma matriz N x N (13 GB para 40 mil pontos). Ganho: de minutos para 0,07 s. Vale tambem para a limpeza de producao.
 - Transformada de distancia 3D so numa caixa em volta da peca (grade da cena pode ter centenas de milhoes de voxels). Resultado identico (conferido: mesmo % mantido), de minutos para 2-8 s por variante.
 - Cache de amostras: 321 scans, 7 GB (`aprendizado/cache`, fora do git). 9 scans nao tem nenhum quadro com profundidade e ficam de fora.
+
+## Aprendizado 4 - nenhuma caracteristica da cena decide "o plano e mesa" (`caracteristicas.json`, `regra_plano.py`)
+- Extraidas 16 caracteristicas por scan (fracao do plano, cruzamento, achatamento h99/extensao, razao de celulas plano/peca, altura das miras etc.) dos 321 scans.
+- AUC para prever "plano inofensivo" (recall do plano >= recall sem base - 2%): melhor 0,72 (h01), `achatamento` 0,70; `cruzamento` so 0,30 (invertido). Nenhuma separa bem.
+- Busca de regra com limiar unico e penalidade pesada por perder peca, com validacao leave-one-project-out: a melhor regra e **nunca usar o plano** (saldo 0; usar sempre = -650).
+- Quando o plano e inofensivo (22 de 112 scans) ele limpa so 0,28% de pontos a mais em media (max 36%, mesas giratorias grandes). Ganho pequeno, risco alto.
+- Decisao: o padrao passa a ser **sem base + selecao hibrida**. O plano nao decide mais nada sozinho. Tentativa seguinte (aval_03): usar o plano apenas como "periferia da mesa" (faixa do plano longe da peca) e so se a peca tem altura real acima dele.
+- Hipotese de causa da falha das caracteristicas: a mesma geometria (grande plano + peca em cima) aparece em mesa giratoria e em peca achatada sobre bancada; so o contexto de captura (rotacao da mesa, movimento da camera) diferencia. Ideia futura: usar o movimento das poses (camera orbitando a peca) como sinal.

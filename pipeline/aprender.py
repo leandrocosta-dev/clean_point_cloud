@@ -189,12 +189,17 @@ def cmd_avaliar(a):
                 for v in a.variantes:
                     res[v].append(out[v])
     print(f"scans com gabarito: {len(res[a.variantes[0]])} de {len(arqs)}")
-    print(f"{'variante':<46}{'recall med':>11}{'p5':>7}{'<98%':>6}{'<90%':>6}{'lixo':>7}{'err':>5}")
+    ref = res[a.variantes[0]]
+    print(f"{'variante':<52}{'recall':>8}{'p5':>5}{'<98':>5}{'<90':>5}{'lixo':>7}{'mant':>7}{'limpa+':>8}{'saldo':>8}")
     for v, r in res.items():
         ok = [x for x in r if "recall" in x]
         rc = np.array([x["recall"] for x in ok])
-        print(f"{v:<46}{rc.mean()*100:10.2f}%{np.percentile(rc,5)*100:6.0f}%{(rc<0.98).sum():6d}{(rc<0.90).sum():6d}"
-              f"{np.mean([x['lixo'] for x in ok])*100:6.2f}%{len(r)-len(ok):5d}")
+        mant = np.array([x["mantido"] for x in ok])
+        # saldo contra a 1a variante: quanto limpa a mais - 20 x recall perdido (perder peca estraga a malha)
+        limpa = np.array([ref[i]["mantido"] - r[i]["mantido"] for i in range(len(r)) if "recall" in r[i] and "recall" in ref[i]])
+        perda = np.array([max(0.0, ref[i]["recall"] - r[i]["recall"]) for i in range(len(r)) if "recall" in r[i] and "recall" in ref[i]])
+        print(f"{v:<52}{rc.mean()*100:7.2f}%{np.percentile(rc,5)*100:4.0f}%{(rc<0.98).sum():5d}{(rc<0.90).sum():5d}"
+              f"{np.mean([x['lixo'] for x in ok])*100:6.2f}%{mant.mean()*100:6.1f}%{limpa.mean()*100:7.2f}%{(limpa - 20 * perda).sum():8.2f}")
     if a.saida:
         json.dump(res, open(a.saida, "w", encoding="utf-8"), indent=1)
 
@@ -246,6 +251,50 @@ def cmd_perdas(a):
         json.dump(r, open(a.saida, "w", encoding="utf-8"), indent=1)
 
 
+def caracteristicas(A, miras):
+    """Numeros baratos da cena (so a nuvem bruta, sem gabarito) que ajudam a decidir se o plano e mesa."""
+    from revo_projeto import plano_ransac, cruzamento_base
+    A = A.astype(float)
+    n, d, frac = plano_ransac(A[:: max(1, len(A) // 40000)], thr=1.0, it=800)
+    h = A @ n + d
+    u = np.cross(n, [1.0, 0, 0]); u /= np.linalg.norm(u); w = np.cross(n, u)
+    uv = np.c_[A @ u, A @ w]
+    pl = np.abs(h) <= 1.2
+    ac = h > 3
+    celula = 2.0
+
+    def celulas(m):
+        c = np.floor(uv[m] / celula).astype(np.int64)
+        return len(np.unique(c[:, 0] * 1000003 + c[:, 1])) if m.any() else 0
+    c_pl, c_ac, c_tot = celulas(pl), celulas(ac), celulas(np.ones(len(A), bool))
+    hp = np.percentile(h, [1, 50, 90, 99])
+    amp = np.ptp(uv, 0)
+    # miras: a camera olha para a peca; altura e dispersao delas em relacao ao plano
+    hm = miras.astype(float) @ n + d
+    return dict(frac_plano=float(frac), cruza=cruzamento_base(A, n, d),
+                acima=float(ac.mean()), abaixo=float((h < -3).mean()),
+                cel_plano=c_pl, cel_acima=c_ac, razao_cel=c_pl / max(1, c_ac), plano_cobre=c_pl / max(1, c_tot),
+                h01=float(hp[0]), h50=float(hp[1]), h90=float(hp[2]), h99=float(hp[3]),
+                ext_plano_max=float(amp.max()), ext_plano_min=float(amp.min()), achatamento=float(hp[3] / max(1.0, amp.max())),
+                mira_h_med=float(np.median(hm)), mira_h_dp=float(hm.std()), n_miras=int(len(miras)))
+
+
+def _carac_um(f):
+    A, E, miras, F, meta = carregar(os.path.join(CACHE, f))
+    r = caracteristicas(A, miras)
+    r.update(proj=meta["proj"], scan=meta["scan"], esp=meta["esp"], erro_calib=meta["erro_calib"],
+             fitness=meta["fitness"], tem_gt=bool(meta["fitness"] >= FITNESS_GT and len(F) > 0), n_fuse=int(len(F)))
+    return r
+
+
+def cmd_caracteristicas(a):
+    arqs = sorted(f for f in os.listdir(CACHE) if f.endswith(".npz"))
+    with ProcessPoolExecutor(a.jobs) as ex:
+        r = list(ex.map(_carac_um, arqs))
+    json.dump(r, open(a.saida, "w", encoding="utf-8"), indent=1)
+    print(len(r), "scans ->", a.saida, "| com gabarito:", sum(x["tem_gt"] for x in r))
+
+
 def main():
     ap = argparse.ArgumentParser()
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -261,8 +310,11 @@ def main():
     pe.add_argument("--topo", type=int, default=25)
     pe.add_argument("--jobs", type=int, default=6)
     pe.add_argument("--saida")
+    ca = sub.add_parser("caracteristicas")
+    ca.add_argument("--saida", default=os.path.join(os.path.dirname(CACHE), "caracteristicas.json"))
+    ca.add_argument("--jobs", type=int, default=6)
     a = ap.parse_args()
-    {"extrair": cmd_extrair, "avaliar": cmd_avaliar, "perdas": cmd_perdas}[a.cmd](a)
+    {"extrair": cmd_extrair, "avaliar": cmd_avaliar, "perdas": cmd_perdas, "caracteristicas": cmd_caracteristicas}[a.cmd](a)
 
 
 if __name__ == "__main__":

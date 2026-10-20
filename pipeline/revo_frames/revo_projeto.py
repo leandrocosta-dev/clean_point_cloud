@@ -273,7 +273,7 @@ def segmentar_peca(scan, voxel=1.0, faixa_base=1.2, passo=6, log=print,
                    min_votos_frac=0.5, min_tam_frac=0.05, ext_min_mm=15.0, colado_mm=5.0,
                    margem_mm=4.0, transitorio=True, trans_min_free=3, trans_razao=1.0,
                    trans_viz=5, trans_dens=0.6, amostra=None, modo_base="auto", cruza_max=0.10,
-                   selecao="votos", dominancia=0.5):
+                   selecao="votos", dominancia=0.5, periferia_mm=0.0, per_altura=15.0, per_banda=2.5):
     """Separa a peca do prato e das pecas de apoio.
 
     1. Funde uma amostra de todos os quadros no referencial do mundo.
@@ -302,6 +302,7 @@ def segmentar_peca(scan, voxel=1.0, faixa_base=1.2, passo=6, log=print,
     # O plano e mesa/prato de verdade ou uma fatia da propria peca? Cada projeto e diferente.
     cruza = cruzamento_base(A, n, d)
     sem_base = modo_base == "sem" or (modo_base == "auto" and cruza > cruza_max)
+    d_ref = d                                     # plano real (RANSAC), mesmo quando nao e usado como base
     if sem_base:
         d = -float((A @ n).min()) + 10.0          # plano virtual abaixo de tudo: nada e cortado por ele
     h = A @ n + d
@@ -434,13 +435,26 @@ def segmentar_peca(scan, voxel=1.0, faixa_base=1.2, passo=6, log=print,
         hcol = np.where(vazio, ndimage.maximum_filter(hcol, size=5), hcol)
         vazio = ~np.isfinite(hcol) & pegada
     hcol[~np.isfinite(hcol)] = float(hcent.max())
+    # Periferia da mesa: no modo sem base, a faixa do plano real LONGE da peca e mesa (so quando a peca
+    # tem altura de verdade acima do plano; peca achatada nao tem como distinguir de mesa).
+    per = None
+    if sem_base and periferia_mm > 0:
+        h_real = centros @ n + d_ref
+        alta = h_real > 4.0
+        if alta.any() and (h_real.max() >= per_altura):
+            ijf = ij[alta]
+            fp = np.zeros(pegada.shape, bool)
+            fp[tuple(ijf.T)] = True
+            fp = ndimage.binary_closing(np.pad(fp, 8), iterations=4)[8:-8, 8:-8]
+            dist2 = ndimage.distance_transform_edt(~fp).astype(np.float32)
+            per = dict(n=n, d=d_ref, uv_lo=uv_lo, dist=dist2, mm=periferia_mm, banda=per_banda)
     if sem_base:
         pegada = np.zeros_like(pegada)             # sem prato nao ha "piso" nem "coluna" sob a peca
     exts = {c: tuple(int(round(np.ptp(np.argwhere(rot == c), 0)[i] * voxel)) for i in range(3)) for c in partes}
     log(f"   peca escolhida: objeto {peca} ({votos[peca]} de {ok.sum()} miras) | componentes mantidos: {partes} "
         f"(mm {exts}, votos {[int(votos[c]) for c in partes]}) | margem {margem_mm:g} mm")
     return dict(n=n, d=d, faixa_base=faixa_base, voxel=voxel, lo=lo, manter=manter,
-                sem_base=bool(sem_base), cruza=cruza, frac_plano=float(frac),
+                sem_base=bool(sem_base), cruza=cruza, frac_plano=float(frac), periferia=per,
                 u=u, v=v, uv_lo=uv_lo, pegada=pegada, hcol=hcol, trans=trans,
                 h_max=float((centros @ n + d).max() + voxel + 1.0),   # marcadores colados ficam acima do topo
                 peca=peca, votos=votos.tolist(), tam=tam.tolist())
@@ -469,6 +483,18 @@ def mascara_manter(P, seg):
     ok = (ok & acima | piso | coluna | (ok & na_pegada & (h > -1.5))) & (h < seg["h_max"] + 2.0)
     if seg.get("trans") is not None:
         ok &= ~_em_transitorio(P, seg["trans"])
+    per = seg.get("periferia")
+    if per is not None:
+        hr = P @ per["n"] + per["d"]
+        faixa = np.abs(hr) <= per["banda"]
+        if faixa.any():
+            ijp = np.floor(np.c_[P[faixa] @ seg["u"], P[faixa] @ seg["v"]] - per["uv_lo"]).astype(int)
+            dentro = np.all((ijp >= 0) & (ijp < np.array(per["dist"].shape)), axis=1)
+            dd = np.full(len(ijp), np.inf, np.float32)
+            dd[dentro] = per["dist"][tuple(ijp[dentro].T)]
+            kill = np.zeros(len(P), bool)
+            kill[np.flatnonzero(faixa)] = dd > per["mm"]
+            ok &= ~kill
     # Referencia: a peca fundida pelo proprio Revo Scan (fuse.ply). Tudo que esta perto dela e peca,
     # inclusive a face de baixo e detalhes que as regras de altura/componente cortariam.
     if seg.get("ref_arvore") is not None:
