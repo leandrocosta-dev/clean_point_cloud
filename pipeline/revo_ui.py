@@ -176,7 +176,9 @@ class RevoUI:
                 if cls._travado(p.pid):
                     raise RuntimeError(f"Revo Scan (pid {p.pid}) nao responde; feche-o (taskkill /F /PID {p.pid}) e rode de novo")
                 return cls(p.pid)
-        proc = subprocess.Popen([exe], cwd=os.path.dirname(exe))
+        # a lingua do Revo vem do ambiente de quem o inicia (QLocale): os rotulos procurados aqui sao os em ingles
+        env = dict(os.environ, LANG="en_US.UTF-8", LC_ALL="en_US.UTF-8")
+        proc = subprocess.Popen([exe], cwd=os.path.dirname(exe), env=env)
         ui = cls(proc.pid)
         t0 = time.time()
         while time.time() - t0 < espera:
@@ -265,8 +267,13 @@ class RevoUI:
         for d in self.principal.descendants(control_type="TabItem"):
             if d.window_text() == "File":
                 d.click_input()
-        self._esperar(lambda: any(d.window_text() == "Load Project" for d in self.principal.descendants(control_type="Text")),
-                      15, msg="biblioteca nao apareceu")
+        try:
+            self._esperar(lambda: any(d.window_text() == "Load Project" for d in self.principal.descendants(control_type="Text")),
+                          15, msg="biblioteca nao apareceu")
+        except TimeoutError:
+            if any(d.window_text() == "Carregar projeto" for d in self.principal.descendants(control_type="Text")):
+                raise RuntimeError("Revo esta em portugues; feche-o e deixe a automacao inicia-lo (LANG=en_US)")
+            raise
 
     def _contagem(self):
         for d in self.principal.descendants(control_type="Text"):
