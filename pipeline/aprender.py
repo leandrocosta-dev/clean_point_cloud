@@ -295,6 +295,56 @@ def cmd_caracteristicas(a):
     print(len(r), "scans ->", a.saida, "| com gabarito:", sum(x["tem_gt"] for x in r))
 
 
+def _prod_um(args):
+    """Pipeline de producao de verdade (com quadros): transitorios ligados/desligados + ilhas 3D."""
+    f, raiz = args
+    from revo_projeto import RevoScan, segmentar_peca, mascara_manter, ilhas_3d, mascara_ilhas
+    A, E, miras, F, meta = carregar(os.path.join(CACHE, f))
+    if meta["fitness"] < FITNESS_GT or len(F) == 0:
+        return None
+    pasta = os.path.join(raiz, meta["proj"], "data", meta["scan"])
+    out = dict(proj=meta["proj"], scan=meta["scan"])
+    sc = None
+    try:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            sc = RevoScan(pasta, tmp)
+            for m in sorted(set(int(x) for x, p in zip(sc.modo, sc.tem_prof) if p)):
+                sc.calibrar(m)
+            for rot, trans in (("sem_trans", False), ("com_trans", True)):
+                seg = segmentar_peca(sc, transitorio=trans, log=lambda *x: None)
+                keep = mascara_manter(E.astype(float), seg)
+                ilh = ilhas_3d(E[keep][::2].astype(float)) if keep.any() else None
+                if ilh is not None:
+                    keep &= mascara_ilhas(E.astype(float), ilh)
+                rec, lixo, kf = metricas(F, E, keep)
+                out[rot] = dict(recall=rec, lixo=lixo, mantido=kf,
+                                trans_vox=int(seg["trans"]["flag"].sum()) if seg.get("trans") else 0)
+    except Exception as e:
+        out["erro"] = f"{type(e).__name__}: {e}"
+    finally:
+        if sc is not None:
+            sc.c.close()
+    return out
+
+
+def cmd_producao(a):
+    arqs = sorted(f for f in os.listdir(CACHE) if f.endswith(".npz"))[:: a.passo]
+    with ProcessPoolExecutor(a.jobs) as ex:
+        r = [x for x in ex.map(_prod_um, [(f, a.raiz) for f in arqs]) if x]
+    ok = [x for x in r if "com_trans" in x]
+    print(f"{len(ok)} scans (erros: {len(r)-len(ok)})")
+    for rot in ("sem_trans", "com_trans"):
+        rc = np.array([x[rot]["recall"] for x in ok])
+        print(f"{rot:<10} recall {rc.mean()*100:6.2f}% p5 {np.percentile(rc,5)*100:4.0f}% <98%: {(rc<0.98).sum():3d} <90%: {(rc<0.90).sum():3d} "
+              f"lixo {np.mean([x[rot]['lixo'] for x in ok])*100:5.2f}% mantido {np.mean([x[rot]['mantido'] for x in ok])*100:5.1f}%")
+    pior = sorted(ok, key=lambda x: x["com_trans"]["recall"] - x["sem_trans"]["recall"])[:8]
+    print("scans em que os transitorios mais prejudicam (recall com - sem):")
+    for x in pior:
+        print(f"   {x['proj'][-15:]}/{x['scan'][-15:]}: {x['com_trans']['recall']*100:5.1f}% vs {x['sem_trans']['recall']*100:5.1f}% (voxels transitorios {x['com_trans']['trans_vox']})")
+    if a.saida:
+        json.dump(r, open(a.saida, "w", encoding="utf-8"), indent=1)
+
+
 def main():
     ap = argparse.ArgumentParser()
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -313,8 +363,14 @@ def main():
     ca = sub.add_parser("caracteristicas")
     ca.add_argument("--saida", default=os.path.join(os.path.dirname(CACHE), "caracteristicas.json"))
     ca.add_argument("--jobs", type=int, default=6)
+    pr = sub.add_parser("producao")
+    pr.add_argument("--raiz", default="D:/Projects")
+    pr.add_argument("--passo", type=int, default=3)
+    pr.add_argument("--jobs", type=int, default=4)
+    pr.add_argument("--saida")
     a = ap.parse_args()
-    {"extrair": cmd_extrair, "avaliar": cmd_avaliar, "perdas": cmd_perdas, "caracteristicas": cmd_caracteristicas}[a.cmd](a)
+    {"extrair": cmd_extrair, "avaliar": cmd_avaliar, "perdas": cmd_perdas, "caracteristicas": cmd_caracteristicas,
+     "producao": cmd_producao}[a.cmd](a)
 
 
 if __name__ == "__main__":

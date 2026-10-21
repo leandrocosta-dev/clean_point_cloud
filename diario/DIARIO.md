@@ -106,3 +106,4 @@ O usuario abriu `Project20260613_160228_limpo_sem_mesa` (limpo nos frames com `-
 - Resultado parcial com a trava (18 de 41 scans, amostra uniforme): periferia ligou em 10; removidos dentro do corpo: 0 a 199 pontos (<=0,027% do corpo) em todos; nenhum corte grande. Rodada interrompida por memoria (um worker chegou a 36 GB: grade enorme em cenas de ~1 m; ver pendencia).
 - Memoria: rodar no maximo 2 jobs; `ProcessPoolExecutor(max_tasks_per_child=1)`. Scans de cena grande (1 m+) estouram RAM em `segmentar_peca`.
 - Pendente: concluir os 23 scans restantes da amostra; investigar o estouro de memoria da grade; scan Project20260613_143330/144748 (peca baixa, 336x286x66 -> 270x286x46 mm, 33% mantidos) merece olhar visual.
+- Reteste do projeto Project20260613_160228 com a trava `per_corpo_frac` (v0.6.1): contagem de pontos mantidos IDENTICA a entrega validada no Revo nos 3 scans (65.643.732 / 36.689.519 / 15.188.560). A trava nao muda o caso bom.
