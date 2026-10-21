@@ -273,7 +273,7 @@ def segmentar_peca(scan, voxel=1.0, faixa_base=1.2, passo=6, log=print,
                    min_votos_frac=0.5, min_tam_frac=0.05, ext_min_mm=15.0, colado_mm=5.0,
                    margem_mm=4.0, transitorio=True, trans_min_free=3, trans_razao=1.0,
                    trans_viz=5, trans_dens=0.6, amostra=None, modo_base="sem", cruza_max=0.10,
-                   selecao="hibrido", dominancia=0.5, periferia_mm=0.0, per_altura=15.0, per_banda=2.5, per_abertura=6.0, per_alargue=20.0, grandes_frac=0.02):
+                   selecao="hibrido", dominancia=0.5, periferia_mm=0.0, per_altura=15.0, per_banda=2.5, per_abertura=6.0, per_alargue=20.0, grandes_frac=0.02, per_corpo_frac=0.10):
     """Separa a peca do prato e das pecas de apoio.
 
     1. Funde uma amostra de todos os quadros no referencial do mundo.
@@ -446,7 +446,12 @@ def segmentar_peca(scan, voxel=1.0, faixa_base=1.2, passo=6, log=print,
     elif sem_base and periferia_mm > 0:
         h_real = centros @ n + d_ref
         alta = h_real > 4.0
-        if alta.any() and (h_real.max() >= per_altura):
+        # So vale se a peca tem corpo de verdade: >= per_corpo_frac do volume mantido acima de `per_altura`.
+        # Peca achatada (ou plano que nao e mesa) tem quase tudo rente ao plano e a regra a comeria inteira.
+        corpo_frac = float((h_real > per_altura).mean())
+        if alta.any() and corpo_frac < per_corpo_frac:
+            log(f"   periferia da mesa DESLIGADA: so {corpo_frac*100:.0f}% da peca passa de {per_altura:g} mm acima do plano (peca achatada)")
+        elif alta.any() and (h_real.max() >= per_altura):
             # Pegada = so o CORPO da peca. O componente da peca costuma vir colado na mesa, e relevos e
             # marcadores da mesa (>4 mm) entrariam na pegada e a protegeriam. A abertura apaga o que e fino
             # e o corpo e o que tem altura real; so as manchas 2D que contem corpo ficam.

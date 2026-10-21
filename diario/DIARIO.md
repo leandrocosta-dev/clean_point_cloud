@@ -97,3 +97,12 @@ Metricas: **recall** = parte do fuse.ply que continua nos quadros limpos (perder
 
 ### Validacao no Revo Scan (2026-10-20)
 O usuario abriu `Project20260613_160228_limpo_sem_mesa` (limpo nos frames com `--periferia-mm 5 --periferia-banda 12 --periferia-alargue 10`), refez a fusao e a malha saiu perfeita. Ou seja: o Revo funde bem sem a mesa e sem os marcadores neste projeto. Validado em 1 projeto (3 scans); falta rodar `aprender.py` nos demais antes de tornar a periferia padrao.
+
+### Aprendizado 9 - amostra da periferia em outros projetos (2026-10-21)
+`pipeline/avaliar_periferia.py` compara, sobre o cache de `aprender.py`, limpeza padrao x padrao+periferia (5/12/10), sem usar o fuse.ply (que inclui a mesa). Armadilhas:
+- A altura da mesa tem de usar `periferia["n"]/["d"]` (d_ref), NAO `seg["d"]`: com o d errado a mesa aparece a 83-100 mm e o "corpo perdido" sai 50% (falso).
+- "Corpo perdido acima de 15 mm" e 0 por construcao (a regra so mata |h| <= banda). A metrica que vale: removidos DENTRO da projecao vertical do corpo mantido.
+- Falha real achada: scan de peca achatada (Project20260605_141933/20260605_142220): a regra tirou 93% (dentro do corpo 39%). Correcao: trava `per_corpo_frac` (0,10) em `segmentar_peca`: so liga se >=10% do volume mantido passa de `per_altura` (15 mm) acima do plano. Nesse scan passou a manter 99%.
+- Resultado parcial com a trava (18 de 41 scans, amostra uniforme): periferia ligou em 10; removidos dentro do corpo: 0 a 199 pontos (<=0,027% do corpo) em todos; nenhum corte grande. Rodada interrompida por memoria (um worker chegou a 36 GB: grade enorme em cenas de ~1 m; ver pendencia).
+- Memoria: rodar no maximo 2 jobs; `ProcessPoolExecutor(max_tasks_per_child=1)`. Scans de cena grande (1 m+) estouram RAM em `segmentar_peca`.
+- Pendente: concluir os 23 scans restantes da amostra; investigar o estouro de memoria da grade; scan Project20260613_143330/144748 (peca baixa, 336x286x66 -> 270x286x46 mm, 33% mantidos) merece olhar visual.
