@@ -127,6 +127,8 @@ class RevoUI:
         import psutil
         for p in psutil.process_iter(["name"]):
             if p.info["name"] == "RevoScan6.exe":
+                if cls._travado(p.pid):
+                    raise RuntimeError(f"Revo Scan (pid {p.pid}) nao responde; feche-o (taskkill /F /PID {p.pid}) e rode de novo")
                 return cls(p.pid)
         proc = subprocess.Popen([exe], cwd=os.path.dirname(exe))
         ui = cls(proc.pid)
@@ -137,6 +139,27 @@ class RevoUI:
                 return ui
             time.sleep(1)
         raise RuntimeError("Revo Scan nao abriu a janela principal")
+
+    def vivo(self):
+        import psutil
+        return psutil.pid_exists(self.pid)
+
+    @staticmethod
+    def _travado(pid):
+        """True se alguma janela do processo esta 'Nao respondendo' (IsHungAppWindow)."""
+        import ctypes
+        from ctypes import wintypes
+        achou = []
+        enum = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+
+        def cb(h, _):
+            p = wintypes.DWORD()
+            ctypes.windll.user32.GetWindowThreadProcessId(h, ctypes.byref(p))
+            if p.value == pid and ctypes.windll.user32.IsHungAppWindow(h):
+                achou.append(h)
+            return True
+        ctypes.windll.user32.EnumWindows(enum(cb), 0)
+        return bool(achou)
 
     def fechar(self, espera=40):
         """Fecha o Revo como o botao X (WM_CLOSE na janela principal), para ele gravar o que tem pendente.
@@ -268,6 +291,8 @@ class RevoUI:
         caixa = next(d for d in self.principal.descendants(control_type="Edit") if d.is_visible())
         caixa.set_edit_text("")
         caixa.set_edit_text(nome)
+        # sem esperar o filtro, o duplo clique cai no 1o cartao da lista inteira (scan errado)
+        self._esperar(lambda: self._contagem() >= 1, 30, 0.5, f"busca por {nome!r} nao achou cartao")
         time.sleep(2)
         log = LogRevo()
         r = self.principal.rectangle()

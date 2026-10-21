@@ -34,7 +34,7 @@ def copiar_intacto(proj, saida, s):
     shutil.copytree(os.path.join(proj, "data", s), os.path.join(saida, "data", s))
 
 
-def processar(proj, s, saida, pixels=True, ilhas=True, periferia_mm=0.0, per_banda=2.5, per_alargue=20.0):
+def processar(proj, s, saida, pixels=True, ilhas=True, periferia_mm=0.0, per_banda=2.5, per_alargue=20.0, sem_ply_antigos=False):
     """Limpa um scan (roda num processo proprio). Devolve (id, relatorio, log).
 
     Qualquer scan que nao possa ser limpo com seguranca (sem raw_preview, calibracao ruim, limpeza
@@ -69,7 +69,7 @@ def processar(proj, s, saida, pixels=True, ilhas=True, periferia_mm=0.0, per_ban
                 seg = segmentar_peca(scan, periferia_mm=periferia_mm, per_banda=per_banda, per_alargue=per_alargue, log=lambda *a: log.append(" ".join(map(str, a))))
                 seg = adicionar_referencia_fuse(scan, seg, log=lambda *a: log.append(" ".join(map(str, a))))
                 r = limpar_scan(scan, seg, os.path.join(saida, "data", s), log=lambda *a: log.append(" ".join(map(str, a))),
-                                pixels=pixels, ilhas=ilhas, min_mantido=MIN_MANTIDO)
+                                pixels=pixels, ilhas=ilhas, min_mantido=MIN_MANTIDO, sem_ply_antigos=sem_ply_antigos)
                 if r.get("revisar"):
                     return s, dict(status="revisar", erros=erros, **r), _fechar(scan, proj, saida, s, log, copiar=False)
                 render_comparacao(scan, seg, os.path.join(saida, f"{s}_antes_depois.png"))
@@ -101,6 +101,7 @@ def main():
     ap.add_argument("--periferia-mm", type=float, default=0.0, help="remove a mesa (faixa do plano) a mais de X mm da pegada da peca; 0 = desligado")
     ap.add_argument("--periferia-banda", type=float, default=2.5, help="espessura (mm) da faixa do plano removida")
     ap.add_argument("--periferia-alargue", type=float, default=20.0, help="mm do corpo ate onde o relevo baixo ainda conta como peca (bases alargadas)")
+    ap.add_argument("--sem-ply-antigos", action="store_true", help="nao copia fuse.ply/fuse_mesh.ply/mark.ply originais (trazem a mesa); o Revo refaz a fusao")
     ap.add_argument("--jobs", type=int, default=0, help="scans em paralelo (0 = automatico)")
     a = ap.parse_args()
     proj = os.path.abspath(a.projeto)
@@ -120,7 +121,8 @@ def main():
     with ProcessPoolExecutor(jobs) as ex:
         for s, r, log in ex.map(processar, [proj] * len(scans), scans, [saida] * len(scans),
                                     [not a.sem_pixels] * len(scans), [not a.sem_ilhas] * len(scans),
-                                    [a.periferia_mm] * len(scans), [a.periferia_banda] * len(scans), [a.periferia_alargue] * len(scans)):
+                                    [a.periferia_mm] * len(scans), [a.periferia_banda] * len(scans), [a.periferia_alargue] * len(scans),
+                                    [a.sem_ply_antigos] * len(scans)):
             print("\n".join(log), flush=True)
             rel[s] = r
     for s in todos:   # scans fora de --scans vao sem alteracao

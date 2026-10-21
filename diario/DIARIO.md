@@ -136,3 +136,9 @@ Objetivo: rodar a pipeline inteira (limpar -> importar -> fundir -> malha -> exp
 - Teste (projeto limpo, 3 scans, 0,5 mm / malha alta grade 0,5 / furos / marcadores): `Fused ... (0.50mm).ply` + `Mesh ... (0.50mm).ply` nos 3, sem divergencia entre pedido e usado. Um scan falhou ao abrir quando o Revo ja o tinha aberto de uma execucao anterior; sozinho passou.
 - Ainda nao feito: encadear `limpar_raw` -> `revo_pipeline`; `limpar_raw` ainda copia `fuse.ply`/`fuse_mesh.ply`/`mark.ply` antigos; cliques ainda usam o mouse real (abrir, Apply, exportar); janela maximizada e rotulos pt-BR.
 
+### Encadeamento limpeza -> Revo (2026-10-21) - `pipeline/rodar_tudo.py`
+- `limpar_raw --sem-ply-antigos` nao copia `fuse.ply`/`fuse_mesh.ply`/`mark.ply` (traziam a mesa). Verificado: o Revo importa o scan sem esses arquivos e funde/gera malha normalmente (2 de 3 scans no teste; o 3o falhou por causa da busca, abaixo).
+- `rodar_tudo.py` roda `limpar_raw` e depois `revo_pipeline` no `.revo` limpo.
+- Falha achada e corrigida: a busca da biblioteca demora a filtrar; clicar antes abre o 1o cartao da lista inteira (scan errado). `abrir_scan` agora espera `Scan(N) >= 1`; a conferencia da pasta pelo log ja barrava o erro.
+- Revo travou ("Nao responde", 2,3 GB) depois de horas de sessao: a pipeline reinicia o Revo a cada scan e `RevoUI.abrir` recusa um Revo travado (IsHungAppWindow). Reinicio por scan e deteccao de travamento ainda NAO testados (a sessao do Windows estava bloqueada: "There is no active desktop required for moving mouse cursor"). A automacao exige sessao desbloqueada com tela ligada.
+

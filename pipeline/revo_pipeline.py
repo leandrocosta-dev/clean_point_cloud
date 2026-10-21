@@ -83,6 +83,8 @@ def main():
                  "scans": []}
     for g in guids:
         try:
+            if not ui.vivo():             # Revo reiniciado a cada scan: sessao longa acumula memoria e ja travou
+                ui = R.RevoUI.abrir()
             r = processar(ui, g, pastas[g], args)
         except Exception as e:            # um scan com problema nao derruba os outros
             r = {"guid": g, "erro": f"{type(e).__name__}: {e}"}
@@ -90,7 +92,7 @@ def main():
         print(json.dumps(r, ensure_ascii=False), flush=True)
         relatorio["scans"].append(r)
         try:
-            ui.biblioteca()
+            ui.fechar()
         except Exception:
             pass
     with open(os.path.join(args.saida, "revo_pipeline.json"), "w", encoding="utf-8") as f:

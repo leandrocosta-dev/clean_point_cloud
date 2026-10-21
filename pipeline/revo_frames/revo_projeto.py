@@ -702,7 +702,10 @@ def mascara_ilhas(P, ilh):
     return ok
 
 
-def limpar_scan(scan, seg, destino_scan, log=print, pixels=True, ilhas=True, min_mantido=0.0):
+PLY_ANTIGOS = ("fuse.ply", "fuse_mesh.ply", "mark.ply")
+
+
+def limpar_scan(scan, seg, destino_scan, log=print, pixels=True, ilhas=True, min_mantido=0.0, sem_ply_antigos=False):
     """Grava a copia do scan com os pixels fora da peca apagados em cada quadro.
 
     Alem da mascara da peca (`mascara_manter`): `pixels` tira pixels voadores e manchas 2D
@@ -712,6 +715,8 @@ def limpar_scan(scan, seg, destino_scan, log=print, pixels=True, ilhas=True, min
     for item in os.listdir(scan.pasta):
         src = os.path.join(scan.pasta, item)
         if item == "cache":
+            continue
+        if sem_ply_antigos and item in PLY_ANTIGOS:        # nuvem/malha/marcadores ja fundidos, com a mesa
             continue
         if os.path.isdir(src):
             shutil.copytree(src, os.path.join(destino_scan, item), dirs_exist_ok=True)
