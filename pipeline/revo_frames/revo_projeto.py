@@ -31,6 +31,8 @@ from scipy.spatial import cKDTree
 
 SIG_REVO = b"RPAlgo_file_sys\x00"
 SIG_SQL = b"SQLite format 3\x00"
+MAX_VOXELS = 3e8          # voxels da grade da peca (bool + rotulos int32 = ~5 bytes cada)
+MAX_VOXELS_TRANS = 1e8    # grade dos transitorios (2 float32 + filtros)
 THREADS = int(os.environ.get("REVO_THREADS", "-1"))   # threads por consulta de KD-tree (-1 = todas)
 K_PADRAO = (1140.4, 1141.0, 232.8, 319.5)   # modo usado nos scans de teste
 
@@ -314,6 +316,8 @@ def segmentar_peca(scan, voxel=1.0, faixa_base=1.2, passo=6, log=print,
     trans = None
     if transitorio and scan is not None:
         v2 = 2.0
+        while float(np.prod((acima.max(0) - acima.min(0) + 4 * v2) / v2)) > MAX_VOXELS_TRANS:
+            v2 *= 1.25
         lo2 = acima.min(0) - 2 * v2
         idx2 = np.floor((acima - lo2) / v2).astype(np.int64)
         uniq, inv = np.unique(idx2, axis=0, return_inverse=True)
@@ -332,6 +336,13 @@ def segmentar_peca(scan, voxel=1.0, faixa_base=1.2, passo=6, log=print,
         acima = acima[~t_v[inv.ravel()]]
         log(f"   pontos acima apos remover transitorios: {len(acima):,}")
 
+    # Cenas grandes (1 m ou mais, ou pontos soltos longe) viram grades de bilhoes de voxels de 1 mm e
+    # estouram a RAM (36 GB medidos num processo). Acima de MAX_VOXELS o voxel cresce ate caber.
+    voxel0 = voxel
+    while float(np.prod((acima.max(0) - acima.min(0) + 6 * voxel) / voxel)) > MAX_VOXELS:
+        voxel *= 1.25
+    if voxel != voxel0:
+        log(f"   cena grande: voxel {voxel0:g} -> {voxel:.2f} mm para a grade caber na memoria")
     lo = acima.min(0) - 3 * voxel
     dims = np.ceil((acima.max(0) + 3 * voxel - lo) / voxel).astype(int)
     idx = np.floor((acima - lo) / voxel).astype(int)

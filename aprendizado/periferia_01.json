@@ -1,0 +1,1094 @@
+[
+ {
+  "proj": "Project20260402_173050",
+  "scan": "20260402_173518",
+  "ativa": true,
+  "cruza": 0.0005205622071837585,
+  "mant_padrao": 0.9620266666666667,
+  "mant_per": 0.84038,
+  "mesa_tirada": 0.12164666666666667,
+  "corpo_perdido": 0.0,
+  "corpo_perdido_n": 0,
+  "corpo_longe": 0.0,
+  "dentro_n": 0,
+  "dentro_frac": 0.0,
+  "h_max": 57.92480287419359,
+  "ext_padrao": [
+   55,
+   80,
+   79
+  ],
+  "h_perdido": [
+   -1.0,
+   -0.0,
+   1.0
+  ],
+  "h_mantido": [
+   -0.0,
+   12.0,
+   49.0
+  ],
+  "frac_plano": 0.301475,
+  "ext_per": [
+   55,
+   80,
+   79
+  ]
+ },
+ {
+  "proj": "Project20260407_195301",
+  "scan": "20260407_200334",
+  "ativa": true,
+  "cruza": 0.0,
+  "mant_padrao": 0.9812816666666667,
+  "mant_per": 0.826195,
+  "mesa_tirada": 0.15508666666666668,
+  "corpo_perdido": 0.0,
+  "corpo_perdido_n": 0,
+  "corpo_longe": 0.0,
+  "dentro_n": 1,
+  "dentro_frac": 1.0944259790461203e-06,
+  "h_max": 346.4165860826056,
+  "ext_padrao": [
+   727,
+   727,
+   476
+  ],
+  "h_perdido": [
+   -2.0,
+   0.0,
+   4.0
+  ],
+  "h_mantido": [
+   -1.0,
+   200.0,
+   322.0
+  ],
+  "frac_plano": 0.110275,
+  "ext_per": [
+   568,
+   706,
+   459
+  ]
+ },
+ {
+  "proj": "Project20260407_195301",
+  "scan": "20260407_202819",
+  "ativa": true,
+  "cruza": 0.009550002530919399,
+  "mant_padrao": 0.9531625,
+  "mant_per": 0.8304383333333333,
+  "mesa_tirada": 0.12272416666666666,
+  "corpo_perdido": 0.0,
+  "corpo_perdido_n": 0,
+  "corpo_longe": 0.0,
+  "dentro_n": 0,
+  "dentro_frac": 0.0,
+  "h_max": 643.1104214394979,
+  "ext_padrao": [
+   1168,
+   879,
+   821
+  ],
+  "h_perdido": [
+   -3.0,
+   0.0,
+   4.0
+  ],
+  "h_mantido": [
+   -0.0,
+   231.0,
+   408.0
+  ],
+  "frac_plano": 0.084825,
+  "ext_per": [
+   1168,
+   672,
+   821
+  ]
+ },
+ {
+  "proj": "Project20260523_174142",
+  "scan": "20260523_174716",
+  "ativa": false,
+  "cruza": 0.3359375,
+  "mant_padrao": 0.9991562008108488,
+  "mant_per": 0.9991562008108488,
+  "mesa_tirada": 0.0,
+  "corpo_perdido": 0.0,
+  "corpo_perdido_n": 0,
+  "corpo_longe": 0.0
+ },
+ {
+  "proj": "Project20260604_142018",
+  "scan": "20260604_160625",
+  "ativa": false,
+  "cruza": 0.28011251622830213,
+  "mant_padrao": 0.9323741666666666,
+  "mant_per": 0.9323741666666666,
+  "mesa_tirada": 0.0,
+  "corpo_perdido": 0.0,
+  "corpo_perdido_n": 0,
+  "corpo_longe": 0.0
+ },
+ {
+  "proj": "Project20260605_141933",
+  "scan": "20260605_142220",
+  "ativa": false,
+  "cruza": 0.045566937477922995,
+  "mant_padrao": 0.99085,
+  "mant_per": 0.99085,
+  "mesa_tirada": 0.0,
+  "corpo_perdido": 0.0,
+  "corpo_perdido_n": 0,
+  "corpo_longe": 0.0
+ },
+ {
+  "proj": "Project20260605_162240",
+  "scan": "20260605_163649",
+  "ativa": false,
+  "cruza": 0.02326934264107039,
+  "mant_padrao": 0.9961333333333333,
+  "mant_per": 0.9961333333333333,
+  "mesa_tirada": 0.0,
+  "corpo_perdido": 0.0,
+  "corpo_perdido_n": 0,
+  "corpo_longe": 0.0
+ },
+ {
+  "proj": "Project20260607_154154",
+  "scan": "20260607_155001",
+  "ativa": true,
+  "cruza": 0.0,
+  "mant_padrao": 0.9891641666666666,
+  "mant_per": 0.7240541666666667,
+  "mesa_tirada": 0.26511,
+  "corpo_perdido": 0.0,
+  "corpo_perdido_n": 0,
+  "corpo_longe": 0.0,
+  "dentro_n": 141,
+  "dentro_frac": 0.00018646280067126608,
+  "h_max": 300.98142806976097,
+  "ext_padrao": [
+   1178,
+   666,
+   901
+  ],
+  "h_perdido": [
+   -0.0,
+   3.0,
+   10.0
+  ],
+  "h_mantido": [
+   0.0,
+   28.0,
+   143.0
+  ],
+  "frac_plano": 0.0721,
+  "ext_per": [
+   1178,
+   666,
+   901
+  ]
+ },
+ {
+  "proj": "Project20260613_143330",
+  "scan": "20260613_144748",
+  "ativa": true,
+  "cruza": 0.0,
+  "mant_padrao": 0.9823190738562496,
+  "mant_per": 0.3330491461117351,
+  "mesa_tirada": 0.6492699277445145,
+  "corpo_perdido": 0.0,
+  "corpo_perdido_n": 0,
+  "corpo_longe": 0.0,
+  "dentro_n": 0,
+  "dentro_frac": 0.0,
+  "h_max": 168.14009870108794,
+  "ext_padrao": [
+   336,
+   286,
+   66
+  ],
+  "h_perdido": [
+   -3.0,
+   0.0,
+   5.0
+  ],
+  "h_mantido": [
+   -2.0,
+   2.0,
+   139.0
+  ],
+  "frac_plano": 0.20955568378534334,
+  "ext_per": [
+   270,
+   286,
+   46
+  ]
+ },
+ {
+  "proj": "Project20260613_163056",
+  "scan": "20260613_163056",
+  "ativa": true,
+  "cruza": 0.0013744687149774798,
+  "mant_padrao": 0.9840991666666666,
+  "mant_per": 0.5143383333333333,
+  "mesa_tirada": 0.46976083333333335,
+  "corpo_perdido": 0.0,
+  "corpo_perdido_n": 0,
+  "corpo_longe": 0.0,
+  "dentro_n": 9,
+  "dentro_frac": 1.7016931847187952e-05,
+  "h_max": 117.25650650078563,
+  "ext_padrao": [
+   706,
+   670,
+   326
+  ],
+  "h_perdido": [
+   -1.0,
+   2.0,
+   7.0
+  ],
+  "h_mantido": [
+   -1.0,
+   6.0,
+   106.0
+  ],
+  "frac_plano": 0.18245,
+  "ext_per": [
+   319,
+   561,
+   266
+  ]
+ },
+ {
+  "proj": "Project20260708_183750",
+  "scan": "20260708_193853",
+  "ativa": false,
+  "cruza": 0.200487012987013,
+  "mant_padrao": 0.9993673443348078,
+  "mant_per": 0.9993673443348078,
+  "mesa_tirada": 0.0,
+  "corpo_perdido": 0.0,
+  "corpo_perdido_n": 0,
+  "corpo_longe": 0.0
+ },
+ {
+  "proj": "Project20260712_125022",
+  "scan": "20260712_125140",
+  "ativa": false,
+  "cruza": 0.2048236798830623,
+  "mant_padrao": 0.9983902456146296,
+  "mant_per": 0.9983902456146296,
+  "mesa_tirada": 0.0,
+  "corpo_perdido": 0.0,
+  "corpo_perdido_n": 0,
+  "corpo_longe": 0.0
+ },
+ {
+  "proj": "Project20260901_123832",
+  "scan": "20260901_124308",
+  "ativa": false,
+  "cruza": 0.17480896368163476,
+  "mant_padrao": 0.9518416666666667,
+  "mant_per": 0.9518416666666667,
+  "mesa_tirada": 0.0,
+  "corpo_perdido": 0.0,
+  "corpo_perdido_n": 0,
+  "corpo_longe": 0.0
+ },
+ {
+  "proj": "Project20260913_171219",
+  "scan": "20260913_171940",
+  "ativa": true,
+  "cruza": 0.025555616228908427,
+  "mant_padrao": 0.9329233333333333,
+  "mant_per": 0.7633275,
+  "mesa_tirada": 0.16959583333333333,
+  "corpo_perdido": 0.0,
+  "corpo_perdido_n": 0,
+  "corpo_longe": 0.0,
+  "dentro_n": 47,
+  "dentro_frac": 0.00013400697976779727,
+  "h_max": 237.2286983199341,
+  "ext_padrao": [
+   489,
+   319,
+   219
+  ],
+  "h_perdido": [
+   -11.0,
+   -1.0,
+   3.0
+  ],
+  "h_mantido": [
+   -32.0,
+   -0.0,
+   170.0
+  ],
+  "frac_plano": 0.09785,
+  "ext_per": [
+   489,
+   319,
+   219
+  ]
+ },
+ {
+  "proj": "Project20260920_150020",
+  "scan": "20260920_150610",
+  "ativa": false,
+  "cruza": 0.10282801077337438,
+  "mant_padrao": 0.9868108333333333,
+  "mant_per": 0.9868108333333333,
+  "mesa_tirada": 0.0,
+  "corpo_perdido": 0.0,
+  "corpo_perdido_n": 0,
+  "corpo_longe": 0.0
+ },
+ {
+  "proj": "Project20260920_150020",
+  "scan": "20260920_152154",
+  "ativa": true,
+  "cruza": 0.09864950411479215,
+  "mant_padrao": 0.9622391666666666,
+  "mant_per": 0.6701825,
+  "mesa_tirada": 0.2920566666666667,
+  "corpo_perdido": 0.0,
+  "corpo_perdido_n": 0,
+  "corpo_longe": 0.0,
+  "dentro_n": 11,
+  "dentro_frac": 2.0821857650423726e-05,
+  "h_max": 101.99795657679414,
+  "ext_padrao": [
+   491,
+   233,
+   368
+  ],
+  "h_perdido": [
+   -2.0,
+   0.0,
+   9.0
+  ],
+  "h_mantido": [
+   -18.0,
+   13.0,
+   68.0
+  ],
+  "frac_plano": 0.134225,
+  "ext_per": [
+   491,
+   233,
+   353
+  ]
+ },
+ {
+  "proj": "Project20260920_150020",
+  "scan": "20260920_154329",
+  "ativa": true,
+  "cruza": 0.05472233481961897,
+  "mant_padrao": 0.9984966666666667,
+  "mant_per": 0.2425975,
+  "mesa_tirada": 0.7558991666666667,
+  "corpo_perdido": 0.0,
+  "corpo_perdido_n": 0,
+  "corpo_longe": 0.0,
+  "dentro_n": 0,
+  "dentro_frac": 0.0,
+  "h_max": 32.06406977813998,
+  "ext_padrao": [
+   245,
+   198,
+   82
+  ],
+  "h_perdido": [
+   -2.0,
+   -0.0,
+   1.0
+  ],
+  "h_mantido": [
+   -2.0,
+   0.0,
+   22.0
+  ],
+  "frac_plano": 0.703425,
+  "ext_per": [
+   245,
+   182,
+   82
+  ]
+ },
+ {
+  "proj": "Project20260920_150020",
+  "scan": "20260920_155854",
+  "ativa": true,
+  "cruza": 0.02822463687275486,
+  "mant_padrao": 0.9878508333333333,
+  "mant_per": 0.26531916666666666,
+  "mesa_tirada": 0.7225316666666667,
+  "corpo_perdido": 0.0,
+  "corpo_perdido_n": 0,
+  "corpo_longe": 0.0,
+  "dentro_n": 5,
+  "dentro_frac": 1.8934230058468903e-05,
+  "h_max": 168.46684994988658,
+  "ext_padrao": [
+   883,
+   972,
+   549
+  ],
+  "h_perdido": [
+   -1.0,
+   0.0,
+   3.0
+  ],
+  "h_mantido": [
+   -1.0,
+   1.0,
+   109.0
+  ],
+  "frac_plano": 0.457725,
+  "ext_per": [
+   750,
+   794,
+   496
+  ]
+ },
+ {
+  "proj": "Project20260921_185107",
+  "scan": "20260921_190944",
+  "ativa": true,
+  "cruza": 0.009133703365418393,
+  "mant_padrao": 0.9761725,
+  "mant_per": 0.6898341666666666,
+  "mesa_tirada": 0.2863383333333333,
+  "corpo_perdido": 0.0,
+  "corpo_perdido_n": 0,
+  "corpo_longe": 0.0,
+  "dentro_n": 19,
+  "dentro_frac": 3.777944360821524e-05,
+  "h_max": 318.23060008110144,
+  "ext_padrao": [
+   791,
+   528,
+   1657
+  ],
+  "h_perdido": [
+   -9.0,
+   -0.0,
+   6.0
+  ],
+  "h_mantido": [
+   -49.0,
+   2.0,
+   165.0
+  ],
+  "frac_plano": 0.17195,
+  "ext_per": [
+   791,
+   528,
+   1657
+  ]
+ },
+ {
+  "proj": "Project20260921_185107",
+  "scan": "20260921_194205",
+  "ativa": true,
+  "cruza": 0.03246524101912626,
+  "mant_padrao": 0.9562391666666666,
+  "mant_per": 0.5980641666666666,
+  "mesa_tirada": 0.358175,
+  "corpo_perdido": 0.0,
+  "corpo_perdido_n": 0,
+  "corpo_longe": 0.0,
+  "dentro_n": 87,
+  "dentro_frac": 0.00022508421254158884,
+  "h_max": 188.18632343405443,
+  "ext_padrao": [
+   1027,
+   532,
+   228
+  ],
+  "h_perdido": [
+   -11.0,
+   -1.0,
+   4.0
+  ],
+  "h_mantido": [
+   -54.0,
+   0.0,
+   98.0
+  ],
+  "frac_plano": 0.13255,
+  "ext_per": [
+   1027,
+   532,
+   228
+  ]
+ },
+ {
+  "proj": "Project20260924_194120",
+  "scan": "20260924_194310",
+  "ativa": true,
+  "cruza": 0.0005183544602045144,
+  "mant_padrao": 0.990935,
+  "mant_per": 0.582635,
+  "mesa_tirada": 0.4083,
+  "corpo_perdido": 0.0,
+  "corpo_perdido_n": 0,
+  "corpo_longe": 0.0,
+  "dentro_n": 19,
+  "dentro_frac": 4.099864057139158e-05,
+  "h_max": 58.76599398915715,
+  "ext_padrao": [
+   422,
+   326,
+   108
+  ],
+  "h_perdido": [
+   -2.0,
+   -0.0,
+   1.0
+  ],
+  "h_mantido": [
+   -1.0,
+   1.0,
+   49.0
+  ],
+  "frac_plano": 0.377925,
+  "ext_per": [
+   394,
+   324,
+   105
+  ]
+ },
+ {
+  "proj": "Project20260924_200645",
+  "scan": "20260924_205051",
+  "ativa": true,
+  "cruza": 0.018556701030927835,
+  "mant_padrao": 0.949535,
+  "mant_per": 0.5819208333333333,
+  "mesa_tirada": 0.3676141666666667,
+  "corpo_perdido": 0.0,
+  "corpo_perdido_n": 0,
+  "corpo_longe": 0.0,
+  "dentro_n": 235,
+  "dentro_frac": 0.0006052052804804557,
+  "h_max": 56.400634876885334,
+  "ext_padrao": [
+   169,
+   372,
+   194
+  ],
+  "h_perdido": [
+   -1.0,
+   0.0,
+   5.0
+  ],
+  "h_mantido": [
+   -1.0,
+   4.0,
+   47.0
+  ],
+  "frac_plano": 0.353225,
+  "ext_per": [
+   133,
+   361,
+   189
+  ]
+ },
+ {
+  "proj": "Project20260924_200645",
+  "scan": "20260924_214632",
+  "ativa": false,
+  "cruza": 0.21268430620076753,
+  "mant_padrao": 0.9926191666666667,
+  "mant_per": 0.9926191666666667,
+  "mesa_tirada": 0.0,
+  "corpo_perdido": 0.0,
+  "corpo_perdido_n": 0,
+  "corpo_longe": 0.0
+ },
+ {
+  "proj": "Project20260924_200645",
+  "scan": "20260924_223843",
+  "ativa": false,
+  "cruza": 0.2787895018746652,
+  "mant_padrao": 0.9378633333333334,
+  "mant_per": 0.9378633333333334,
+  "mesa_tirada": 0.0,
+  "corpo_perdido": 0.0,
+  "corpo_perdido_n": 0,
+  "corpo_longe": 0.0
+ },
+ {
+  "proj": "Project20260924_231531",
+  "scan": "20260924_232304",
+  "ativa": true,
+  "cruza": 0.038105887918799194,
+  "mant_padrao": 0.9111591666666666,
+  "mant_per": 0.6327566666666666,
+  "mesa_tirada": 0.2784025,
+  "corpo_perdido": 0.0,
+  "corpo_perdido_n": 0,
+  "corpo_longe": 0.0,
+  "dentro_n": 58,
+  "dentro_frac": 0.00020914089966645632,
+  "h_max": 36.544706719726946,
+  "ext_padrao": [
+   402,
+   434,
+   194
+  ],
+  "h_perdido": [
+   -2.0,
+   -0.0,
+   5.0
+  ],
+  "h_mantido": [
+   -2.0,
+   4.0,
+   21.0
+  ],
+  "frac_plano": 0.19385,
+  "ext_per": [
+   396,
+   411,
+   194
+  ]
+ },
+ {
+  "proj": "Project20260925_170910",
+  "scan": "20260925_180110",
+  "ativa": false,
+  "cruza": 0.1519949335022166,
+  "mant_padrao": 0.9775516666666667,
+  "mant_per": 0.9775516666666667,
+  "mesa_tirada": 0.0,
+  "corpo_perdido": 0.0,
+  "corpo_perdido_n": 0,
+  "corpo_longe": 0.0
+ },
+ {
+  "proj": "Project20260926_113217",
+  "scan": "20260926_115725",
+  "ativa": true,
+  "cruza": 0.0004439708755105665,
+  "mant_padrao": 0.98962,
+  "mant_per": 0.6149733333333334,
+  "mesa_tirada": 0.3746466666666667,
+  "corpo_perdido": 0.0,
+  "corpo_perdido_n": 0,
+  "corpo_longe": 0.0,
+  "dentro_n": 2,
+  "dentro_frac": 4.089636656231277e-06,
+  "h_max": 187.75223017146504,
+  "ext_padrao": [
+   534,
+   532,
+   396
+  ],
+  "h_perdido": [
+   -1.0,
+   0.0,
+   1.0
+  ],
+  "h_mantido": [
+   -1.0,
+   2.0,
+   48.0
+  ],
+  "frac_plano": 0.425875,
+  "ext_per": [
+   511,
+   505,
+   318
+  ]
+ },
+ {
+  "proj": "Project20260927_221825",
+  "scan": "20260927_221825",
+  "ativa": false,
+  "cruza": 0.0,
+  "mant_padrao": 0.9857183333333334,
+  "mant_per": 0.9857183333333334,
+  "mesa_tirada": 0.0,
+  "corpo_perdido": 0.0,
+  "corpo_perdido_n": 0,
+  "corpo_longe": 0.0
+ },
+ {
+  "proj": "Project20261010_171104",
+  "scan": "20261010_172707",
+  "ativa": false,
+  "cruza": 0.02755058114507103,
+  "mant_padrao": 0.9959541666666667,
+  "mant_per": 0.9959541666666667,
+  "mesa_tirada": 0.0,
+  "corpo_perdido": 0.0,
+  "corpo_perdido_n": 0,
+  "corpo_longe": 0.0
+ },
+ {
+  "proj": "Project20261010_171104",
+  "scan": "20261010_174039",
+  "ativa": true,
+  "cruza": 0.00036513776928910483,
+  "mant_padrao": 0.9815791666666667,
+  "mant_per": 0.6726491666666666,
+  "mesa_tirada": 0.30893,
+  "corpo_perdido": 0.0,
+  "corpo_perdido_n": 0,
+  "corpo_longe": 0.0,
+  "dentro_n": 36,
+  "dentro_frac": 4.7881063438418965e-05,
+  "h_max": 331.5319148655171,
+  "ext_padrao": [
+   706,
+   534,
+   584
+  ],
+  "h_perdido": [
+   -2.0,
+   1.0,
+   5.0
+  ],
+  "h_mantido": [
+   -1.0,
+   70.0,
+   304.0
+  ],
+  "frac_plano": 0.14015,
+  "ext_per": [
+   505,
+   373,
+   415
+  ]
+ },
+ {
+  "proj": "Project20261011_082005",
+  "scan": "20261011_083653",
+  "ativa": true,
+  "cruza": 0.0036453930684699916,
+  "mant_padrao": 0.9457675,
+  "mant_per": 0.8529233333333334,
+  "mesa_tirada": 0.09284416666666667,
+  "corpo_perdido": 0.0,
+  "corpo_perdido_n": 0,
+  "corpo_longe": 0.0,
+  "dentro_n": 0,
+  "dentro_frac": 0.0,
+  "h_max": 335.241789680891,
+  "ext_padrao": [
+   549,
+   420,
+   425
+  ],
+  "h_perdido": [
+   -2.0,
+   -0.0,
+   1.0
+  ],
+  "h_mantido": [
+   -1.0,
+   105.0,
+   305.0
+  ],
+  "frac_plano": 0.11875,
+  "ext_per": [
+   314,
+   389,
+   373
+  ]
+ },
+ {
+  "proj": "Project20261011_082005",
+  "scan": "20261011_090548",
+  "ativa": true,
+  "cruza": 0.004800960192038408,
+  "mant_padrao": 0.9308275,
+  "mant_per": 0.8160083333333333,
+  "mesa_tirada": 0.11481916666666667,
+  "corpo_perdido": 0.0,
+  "corpo_perdido_n": 0,
+  "corpo_longe": 0.0,
+  "dentro_n": 1,
+  "dentro_frac": 1.288869068946762e-06,
+  "h_max": 337.24189386252846,
+  "ext_padrao": [
+   506,
+   441,
+   461
+  ],
+  "h_perdido": [
+   -3.0,
+   -0.0,
+   5.0
+  ],
+  "h_mantido": [
+   -44.0,
+   120.0,
+   321.0
+  ],
+  "frac_plano": 0.1356,
+  "ext_per": [
+   506,
+   441,
+   461
+  ]
+ },
+ {
+  "proj": "Project20261011_165456",
+  "scan": "20261011_170131",
+  "ativa": true,
+  "cruza": 0.03701758991861381,
+  "mant_padrao": 0.9934558333333333,
+  "mant_per": 0.7635841666666666,
+  "mesa_tirada": 0.22987166666666667,
+  "corpo_perdido": 0.0,
+  "corpo_perdido_n": 0,
+  "corpo_longe": 0.0,
+  "dentro_n": 0,
+  "dentro_frac": 0.0,
+  "h_max": 99.60172467477139,
+  "ext_padrao": [
+   288,
+   113,
+   110
+  ],
+  "h_perdido": [
+   -3.0,
+   -0.0,
+   4.0
+  ],
+  "h_mantido": [
+   -2.0,
+   6.0,
+   68.0
+  ],
+  "frac_plano": 0.2191,
+  "ext_per": [
+   280,
+   108,
+   110
+  ]
+ },
+ {
+  "proj": "Project20261011_165456",
+  "scan": "20261011_175545",
+  "ativa": true,
+  "cruza": 0.010634257500949488,
+  "mant_padrao": 0.9869941666666666,
+  "mant_per": 0.5914433333333333,
+  "mesa_tirada": 0.39555083333333335,
+  "corpo_perdido": 0.0,
+  "corpo_perdido_n": 0,
+  "corpo_longe": 0.0,
+  "dentro_n": 0,
+  "dentro_frac": 0.0,
+  "h_max": 88.70942798739736,
+  "ext_padrao": [
+   397,
+   295,
+   226
+  ],
+  "h_perdido": [
+   -3.0,
+   -0.0,
+   5.0
+  ],
+  "h_mantido": [
+   -25.0,
+   6.0,
+   52.0
+  ],
+  "frac_plano": 0.160475,
+  "ext_per": [
+   397,
+   292,
+   226
+  ]
+ },
+ {
+  "proj": "Project20261011_165456",
+  "scan": "20261011_184157",
+  "ativa": true,
+  "cruza": 0.013097426470588236,
+  "mant_padrao": 0.9355116666666666,
+  "mant_per": 0.328445,
+  "mesa_tirada": 0.6070666666666666,
+  "corpo_perdido": 0.0,
+  "corpo_perdido_n": 0,
+  "corpo_longe": 0.0,
+  "dentro_n": 801,
+  "dentro_frac": 0.003574201493935905,
+  "h_max": 89.940211216281,
+  "ext_padrao": [
+   783,
+   841,
+   132
+  ],
+  "h_perdido": [
+   -1.0,
+   0.0,
+   4.0
+  ],
+  "h_mantido": [
+   -1.0,
+   0.0,
+   42.0
+  ],
+  "frac_plano": 0.585725,
+  "ext_per": [
+   651,
+   724,
+   122
+  ]
+ },
+ {
+  "proj": "Project20261012_101504",
+  "scan": "20261012_101730",
+  "ativa": true,
+  "cruza": 0.058078742397837606,
+  "mant_padrao": 0.8998373881778917,
+  "mant_per": 0.4302917267951913,
+  "mesa_tirada": 0.46954566138270043,
+  "corpo_perdido": 0.0,
+  "corpo_perdido_n": 0,
+  "corpo_longe": 0.0,
+  "dentro_n": 1115,
+  "dentro_frac": 0.0028783329934404986,
+  "h_max": 104.50556118312079,
+  "ext_padrao": [
+   481,
+   383,
+   95
+  ],
+  "h_perdido": [
+   -9.0,
+   0.0,
+   8.0
+  ],
+  "h_mantido": [
+   -7.0,
+   7.0,
+   65.0
+  ],
+  "frac_plano": 0.1906,
+  "ext_per": [
+   444,
+   373,
+   94
+  ]
+ },
+ {
+  "proj": "golf",
+  "scan": "20260411_183832",
+  "ativa": true,
+  "cruza": 0.0,
+  "mant_padrao": 0.993384652393553,
+  "mant_per": 0.9757214956520911,
+  "mesa_tirada": 0.017663156741461974,
+  "corpo_perdido": 0.0,
+  "corpo_perdido_n": 0,
+  "corpo_longe": 0.0,
+  "dentro_n": 0,
+  "dentro_frac": 0.0,
+  "h_max": 114.13110656580301,
+  "ext_padrao": [
+   50,
+   113,
+   99
+  ],
+  "h_perdido": [
+   -1.0,
+   1.0,
+   2.0
+  ],
+  "h_mantido": [
+   -0.0,
+   8.0,
+   80.0
+  ],
+  "frac_plano": 0.29975,
+  "ext_per": [
+   50,
+   113,
+   99
+  ]
+ },
+ {
+  "proj": "golf",
+  "scan": "20260411_192142",
+  "ativa": false,
+  "cruza": 0.008708272859216255,
+  "mant_padrao": 0.9586746884025362,
+  "mant_per": 0.9586746884025362,
+  "mesa_tirada": 0.0,
+  "corpo_perdido": 0.0,
+  "corpo_perdido_n": 0,
+  "corpo_longe": 0.0
+ },
+ {
+  "proj": "golf",
+  "scan": "20260411_195112",
+  "ativa": false,
+  "cruza": 0.0,
+  "mant_padrao": 0.9644920984354116,
+  "mant_per": 0.9644920984354116,
+  "mesa_tirada": 0.0,
+  "corpo_perdido": 0.0,
+  "corpo_perdido_n": 0,
+  "corpo_longe": 0.0
+ },
+ {
+  "proj": "golf",
+  "scan": "20260411_200629",
+  "ativa": false,
+  "cruza": 0.3,
+  "mant_padrao": 0.9554075036833829,
+  "mant_per": 0.9554075036833829,
+  "mesa_tirada": 0.0,
+  "corpo_perdido": 0.0,
+  "corpo_perdido_n": 0,
+  "corpo_longe": 0.0
+ },
+ {
+  "proj": "golf",
+  "scan": "20260411_202109",
+  "ativa": true,
+  "cruza": 0.0,
+  "mant_padrao": 0.9390721988202584,
+  "mant_per": 0.6982897397337868,
+  "mesa_tirada": 0.24078245908647158,
+  "corpo_perdido": 0.0,
+  "corpo_perdido_n": 0,
+  "corpo_longe": 0.0,
+  "dentro_n": 0,
+  "dentro_frac": 0.0,
+  "h_max": 52.09463656380899,
+  "ext_padrao": [
+   95,
+   99,
+   71
+  ],
+  "h_perdido": [
+   -1.0,
+   0.0,
+   1.0
+  ],
+  "h_mantido": [
+   -1.0,
+   1.0,
+   29.0
+  ],
+  "frac_plano": 0.5481243406364239,
+  "ext_per": [
+   95,
+   99,
+   71
+  ]
+ }
+]

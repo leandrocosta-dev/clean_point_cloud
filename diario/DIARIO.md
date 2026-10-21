@@ -107,3 +107,8 @@ O usuario abriu `Project20260613_160228_limpo_sem_mesa` (limpo nos frames com `-
 - Memoria: rodar no maximo 2 jobs; `ProcessPoolExecutor(max_tasks_per_child=1)`. Scans de cena grande (1 m+) estouram RAM em `segmentar_peca`.
 - Pendente: concluir os 23 scans restantes da amostra; investigar o estouro de memoria da grade; scan Project20260613_143330/144748 (peca baixa, 336x286x66 -> 270x286x46 mm, 33% mantidos) merece olhar visual.
 - Reteste do projeto Project20260613_160228 com a trava `per_corpo_frac` (v0.6.1): contagem de pontos mantidos IDENTICA a entrega validada no Revo nos 3 scans (65.643.732 / 36.689.519 / 15.188.560). A trava nao muda o caso bom.
+
+### Aprendizado 10 - memoria e amostra completa da periferia (2026-10-21)
+- Estouro de RAM: a grade da peca (voxel 1 mm) em cena de ~1 m passa de 1e9 voxels (36 GB num processo). Correcao em `segmentar_peca`: `MAX_VOXELS` (3e8) e `MAX_VOXELS_TRANS` (1e8); o voxel cresce x1,25 ate caber e loga "cena grande". Scan que levava 4+ min e >17 GB: 84 s e ~5 GB, resultado equivalente (dentro do corpo 141 vs 199 pontos).
+- Amostra uniforme de 41 scans de 12 projetos (`avaliar_periferia.py --limite 40`, `aprendizado/periferia_01.json`): 0 erros; periferia ligou em 25 e a trava a desligou em 16 (plano atravessa a peca ou peca achatada). Removidos DENTRO da projecao do corpo: mediana 0,002%, p95 0,24%, max 0,36% (Project20261011_165456/20261011_184157, peca baixa ~130 mm); nenhum acima de 0,5%.
+- Periferia continua opt-in (`--periferia-mm`): so 1 projeto foi fundido no Revo (malha perfeita). Tornar padrao depois de mais um teste de fusao pelo usuario em peca diferente.
