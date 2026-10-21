@@ -175,7 +175,12 @@ class RevoUI:
             if p.info["name"] == "RevoScan6.exe":
                 if cls._travado(p.pid):
                     raise RuntimeError(f"Revo Scan (pid {p.pid}) nao responde; feche-o (taskkill /F /PID {p.pid}) e rode de novo")
-                return cls(p.pid)
+                ui = cls(p.pid)
+                abas = [d.window_text() for d in ui.principal.descendants(control_type="TabItem")]
+                if abas and "File" not in abas:     # sessao aberta pelo usuario em outra lingua: nao mexer nela
+                    raise RuntimeError("ja ha um Revo Scan aberto fora do ingles (sessao do usuario?); "
+                                       "feche-o para a automacao iniciar o seu proprio")
+                return ui
         # a lingua do Revo vem do ambiente de quem o inicia (QLocale): os rotulos procurados aqui sao os em ingles
         env = dict(os.environ, LANG="en_US.UTF-8", LC_ALL="en_US.UTF-8")
         proc = subprocess.Popen([exe], cwd=os.path.dirname(exe), env=env)
