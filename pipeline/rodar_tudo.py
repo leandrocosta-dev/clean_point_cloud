@@ -2,7 +2,9 @@
 
     python pipeline/rodar_tudo.py <pasta_do_projeto> --saida-ply PASTA [opcoes]
 
-Etapa 1 grava <pasta_do_projeto>/../<nome>_limpo (ou --saida-limpo) SEM os fuse.ply/fuse_mesh.ply/mark.ply
+Com --unir A B (duas partes da mesma peca) ha uma etapa extra entre as duas: une os frames de B em A
+(uniao_scans.py, --lados opostos = peca virada, mesmo = mesma face; so quem escaneou sabe) e o Revo funde
+o scan unico <A>_uniao. Etapa 1 grava <pasta_do_projeto>/../<nome>_limpo (ou --saida-limpo) SEM os fuse.ply/fuse_mesh.ply/mark.ply
 originais; etapa 2 importa esse .revo no Revo Scan e exporta, por scan, a nuvem fundida e a malha em
 PASTA/<scan>/. O original nunca e tocado. Opcoes da limpeza: --periferia-mm/--periferia-banda/
 --periferia-alargue/--jobs. Opcoes do Revo: --ponto, --malha, --otimizar, --grade, --furos, --marcadores,
@@ -26,6 +28,9 @@ def main():
     ap.add_argument("--periferia-alargue", type=float, default=20.0)
     ap.add_argument("--jobs", type=int, default=0)
     ap.add_argument("--scans", nargs="+")
+    ap.add_argument("--unir", nargs=2, metavar=("A", "B"), help="guids das duas partes da mesma peca")
+    ap.add_argument("--lados", choices=("opostos", "mesmo", "auto"), default="opostos", help="so com --unir")
+    ap.add_argument("--saida-uniao", help="so com --unir (padrao: <saida-limpo>_uniao)")
     ap.add_argument("--ponto", type=float)
     ap.add_argument("--malha", choices=("rapida", "alta"), default="rapida")
     ap.add_argument("--otimizar", choices=("nenhum", "baixo", "alto"), default="baixo")
@@ -42,15 +47,27 @@ def main():
     c1 = [sys.executable, os.path.join(AQUI, "limpar_raw.py"), proj, "--saida", saida, "--sem-ply-antigos",
           "--periferia-mm", str(a.periferia_mm), "--periferia-banda", str(a.periferia_banda),
           "--periferia-alargue", str(a.periferia_alargue), "--jobs", str(a.jobs)]
-    if a.scans:
+    if a.unir:
+        c1 += ["--scans", *a.unir]
+    elif a.scans:
         c1 += ["--scans", *a.scans]
     print("== etapa 1: limpeza dos quadros", flush=True)
     if subprocess.run(c1).returncode:
         sys.exit("limpeza falhou; o Revo nao foi acionado")
 
-    novo = os.path.join(saida, os.path.splitext(revo)[0] + "_limpo.revo")
-    if not os.path.exists(novo):
-        novo = os.path.join(saida, [f for f in os.listdir(saida) if f.endswith(".revo")][0])
+    if a.unir:
+        nome = a.unir[0] + "_uniao"
+        uniao = os.path.abspath(a.saida_uniao or saida + "_uniao")
+        print("== etapa 1b: uniao das partes (frames de B levados para A)", flush=True)
+        cu = [sys.executable, os.path.join(AQUI, "uniao_scans.py"), saida, "--scans", *a.unir, "--lados", a.lados,
+              "--saida", uniao, "--nome", nome]
+        if subprocess.run(cu).returncode:
+            sys.exit("uniao falhou; o Revo nao foi acionado")
+        novo = os.path.join(uniao, nome + ".revo")
+    else:
+        novo = os.path.join(saida, os.path.splitext(revo)[0] + "_limpo.revo")
+        if not os.path.exists(novo):
+            novo = os.path.join(saida, [f for f in os.listdir(saida) if f.endswith(".revo")][0])
     c2 = [sys.executable, os.path.join(AQUI, "revo_pipeline.py"), novo, "--saida", os.path.abspath(a.saida_ply),
           "--malha", a.malha, "--otimizar", a.otimizar]
     for flag, v in (("--ponto", a.ponto), ("--grade", a.grade)):
@@ -59,7 +76,7 @@ def main():
     for flag, on in (("--furos", a.furos), ("--marcadores", a.marcadores), ("--manter-isolados", a.manter_isolados)):
         if on:
             c2.append(flag)
-    if a.scans:
+    if a.scans and not a.unir:
         c2 += ["--scans", ",".join(a.scans)]
     print("== etapa 2: Revo Scan (fusao, malha, exportacao)", flush=True)
     sys.exit(subprocess.run(c2).returncode)
