@@ -99,6 +99,7 @@ def main():
         json.dump(relatorio, f, indent=1, ensure_ascii=False)
     if args.fechar:
         ui.fechar()
+    R.restaurar_janelas()
     ruins = [s["guid"] for s in relatorio["scans"] if "erro" in s or s.get("divergencias")]
     print("ok" if not ruins else f"atencao: {ruins}")
     sys.exit(1 if ruins else 0)

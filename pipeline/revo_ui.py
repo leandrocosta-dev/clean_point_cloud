@@ -28,6 +28,51 @@ LOG = os.path.expandvars(r"%LOCALAPPDATA%\Revopoint\RevoScan6\logs\RevoScan6.log
 BIBLIOTECA = os.path.expandvars(r"%APPDATA%\Revopoint\RevoScan6\Projects")
 
 
+_MINIMIZOU = False
+
+
+def manter_tela_ativa():
+    """Deixa a maquina pronta para clicar: acorda a tela (se o Windows a desligou por tempo), a mantem
+    ligada enquanto este processo viver e garante que o cursor responde.
+    Janela ELEVADA em primeiro plano (ex.: Gerenciador de Tarefas) bloqueia o mouse de processos sem
+    elevacao (UIPI): SetCursorPos falha ("no active desktop"). Nesse caso minimiza as janelas pelo shell
+    (como Win+D); `restaurar_janelas()` desfaz. Com tela de bloqueio com senha nada disso basta."""
+    global _MINIMIZOU
+    import ctypes
+    ES_CONTINUOUS, ES_SYSTEM, ES_DISPLAY = 0x80000000, 0x1, 0x2
+    u = ctypes.windll.user32
+    ctypes.windll.kernel32.SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM | ES_DISPLAY)
+    for dx in (1, -1):                                         # movimento de 1 px e volta: liga o monitor
+        u.mouse_event(0x0001, dx, 0, 0, 0)                     # MOUSEEVENTF_MOVE relativo
+        time.sleep(0.3)
+    time.sleep(2)
+    if not u.SetCursorPos(*_posicao_cursor()):
+        subprocess.run(["powershell", "-NoProfile", "-c", "(New-Object -ComObject Shell.Application).MinimizeAll()"],
+                       capture_output=True)
+        _MINIMIZOU = True
+        time.sleep(2)
+        if not u.SetCursorPos(*_posicao_cursor()):
+            raise RuntimeError("o mouse nao responde (tela de bloqueio ou janela elevada em foco); "
+                               "desbloqueie/feche a janela e rode de novo")
+
+
+def _posicao_cursor():
+    import ctypes
+    from ctypes import wintypes
+    p = wintypes.POINT()
+    ctypes.windll.user32.GetCursorPos(ctypes.byref(p))
+    return p.x, p.y
+
+
+def restaurar_janelas():
+    """Desfaz o MinimizeAll feito por `manter_tela_ativa`."""
+    global _MINIMIZOU
+    if _MINIMIZOU:
+        subprocess.run(["powershell", "-NoProfile", "-c", "(New-Object -ComObject Shell.Application).UndoMinimizeAll()"],
+                       capture_output=True)
+        _MINIMIZOU = False
+
+
 class LogRevo:
     """Le so o que o Revo escreveu no log depois de criada (posicao em bytes; trata a rotacao do arquivo)."""
 
@@ -125,6 +170,7 @@ class RevoUI:
     @classmethod
     def abrir(cls, exe=EXE, espera=40):
         import psutil
+        manter_tela_ativa()
         for p in psutil.process_iter(["name"]):
             if p.info["name"] == "RevoScan6.exe":
                 if cls._travado(p.pid):
