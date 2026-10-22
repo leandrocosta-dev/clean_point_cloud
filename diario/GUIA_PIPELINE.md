@@ -155,3 +155,14 @@ Instabilidade sob carga sustentada em todos os nucleos: segfaults aleatorios do 
   MeshLib 27 furos / 2 componentes / 978 mil tri. Mesmo aparo (0,005 / 3 mm) e reparo MeshLib. Poisson depth 9 apagou tudo com o aparo de 3 mm (nao usar sem relaxar).
   Construcao por cobertura com a malha de UM scan nao compensou: o 185120 se encaixa na nuvem final com 0,5 mm RMS (deriva propria) e cobre so 48% da pele externa a < 1 mm (`base_por_cobertura.py`).
   Receita final do Onix: nuvem_completa -> `orientar_normais --so-visiveis` -> `malha_poisson --profundidade 10` -> decimar p/ 1 M -> `malha_meshlib` -> `vista_malha` (verso ~0%).
+
+## DESCOBERTA CENTRAL (2026-10-22): 14 dos 20 scans do Onix sao da face INTERNA; construcao por cobertura (v13)
+- Malha original (fuse_mesh.ply) de cada scan, alinhada a nuvem externa: orientacao CONCORDA com a normal p/ fora em 6 scans (185120, 185633, 185733, 191925, 192042, 192128 = 18:51-19:21)
+  e DISCORDA (3-18%) nos outros 14 (19:02 em diante... 190200, 190944, 192440, 192628, 193159, 193719, 194205..195709): eles viram a parede POR DENTRO. Alinhados a face externa ficam ~1,6 mm
+  deslocados (espessura da parede) -> camadas duplas, pontilhado, verso. Isso explica v5..v12 (rugosidade 120-580 um) vs scan unico (22 um). Teste: `construcao_por_cobertura.py` imprime a concordancia por scan.
+- Receita certa p/ a face EXTERNA: `construcao_por_cobertura.py <proj> <pasta_seg> <direto.json> <T_seg_revo.npy> <nuvem_externa.ply> --saida P --margem 0 --so-externos`
+  (base = scan externo de maior cobertura apos aparar a <=1,5 mm da nuvem externa; guloso com so os pedacos que preenchem lacunas, abertura 3 mm, realinhamento local por pedaco).
+  Depois `malha_meshlib.py montada.ply --saida m.ply --min-faces 1500 --furo-max 25`. Resultado v13: base 185733 + 185120, 185633, 192128, 191925; cobertura da pele externa 80,9%;
+  rugosidade mediana 22 um (= scan unico), verso 0,17%, 96 furos, 34 componentes, 933 mil tri. Poisson sobre as pecas NAO ajuda (528 um: amplifica degraus de emenda).
+- Os 19% restantes so tem dado nos scans INTERNOS. Os 14 internos servem p/ uma malha da face interna SEPARADA (ou p/ a espessura da parede), nao p/ preencher a externa.
+- Como o usuario achou o problema: comparou lado a lado a malha do scan unico (lisa) com a uniao (pontilhada) no 3Dconnexion e disse "precisa mudar o conceito: maior scan como base e inserir so os que preenchem lacunas".
