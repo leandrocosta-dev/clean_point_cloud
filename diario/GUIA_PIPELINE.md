@@ -111,3 +111,11 @@ Instabilidade sob carga sustentada em todos os nucleos: segfaults aleatorios do 
 - CORRECAO: os "buracos" da grade inferior do Onix nao sao falta de dado. Na regiao (x -470..360, y -225..-140, z<60) os 19 scans tem 2,86 M pontos
   e 99,2% deles tem vizinho a < 2,5 mm na nuvem final (so 23,8 mil orfaos). As aberturas retangulares sao as aberturas REAIS da grade; antes pareciam
   tampadas porque as chapas da mesa ficavam na frente na vista traseira. (Teste: pontos dos scans sem vizinho na nuvem final, por regiao.)
+
+## Furos da malha Onix: causa = aparo do Poisson (2026-10-22)
+- A malha v5 tinha 293 furos (3-60 mm de raio); 285 tinham dado de scan dentro. Reincorporar pontos "orfaos" (1,36 M confirmados por >=2 scans) NAO ajudou
+  (309 furos) e 310 mil deles eram a mesa removida (filtrar!). Causa: `malha_poisson.py` descarta vertices com densidade < quantil 0,02 e a > 1,5 mm da nuvem.
+  Poisson depth 11 da mesma nuvem: aparo (0,02; 1,5) -> 317 furos; (0,005; 3) -> 154; (0; 5) -> 84 (mas 5 mm fecha furos pequenos reais). Usar `--quantil 0.005 --dist-max 3`.
+- Scans do pára-choque de OUTRO DIA existem: `D:\Projects\Project20260920_150020` (20260920_153720 cobre a face externa; 82% a < 3 mm do modelo; 153912 tambem) e
+  `Project20260920_143823/20260920_145309`. Nao foram incorporados (os 20 scans ja cobrem quase todos os furos). `20260922_083006` e um teste RGB do usuario: ignorar.
+- Varredura de todos os scans de D:\Projects (extensao por scan): `Desktop\_varredura_scans.csv`.
