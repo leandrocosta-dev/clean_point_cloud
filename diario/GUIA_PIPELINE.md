@@ -174,3 +174,5 @@ Instabilidade sob carga sustentada em todos os nucleos: segfaults aleatorios do 
 - Scans do dia 20/09 (153720, 153912) tambem sao INTERNOS (orientacao 4%): nao preenchem a face externa.
 - O usuario nao usa NX; confere no 3Dconnexion Viewer / MeshInspector. Nenhuma versao apos a v5 foi aprovada por ele.
 - Projeto 2: grupo B (painel) e grupo A entregues; ver memoria projeto2-duas-pecas.
+- v14 (cob6: `--tol-limpa 5.0 --tol-lacuna 2.0 --so-externos --apenas <6 externos>`): base 185733 + 185120 (+374 mil tri), 185633, 192128, 191925; cobertura 80,7%; reparo MeshLib `--min-faces 1500 --furo-max 25`:
+  1,33 M tri, 70 furos, 34 componentes, rugosidade mediana 21 um, verso 0,08%; vista de tras sem os vazios da v13 (aparo de 1,5 mm cortava areas boas; 5 mm so tira mesa/cenario). Entregue em `Desktop\Onix_parachoque_traseiro_ENTREGA`.
