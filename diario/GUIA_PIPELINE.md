@@ -151,3 +151,7 @@ Instabilidade sob carga sustentada em todos os nucleos: segfaults aleatorios do 
   Rugosidade 380 um; com Taubin (30 it, lambda 0,5, mu -0,53) 214 um (deslocamento medio 0,4 mm). Taubin 60: 181 um.
 - AINDA NAO RESOLVIDO: chegar perto dos 22 um do scan unico. Caminho provavel: escolher, por regiao, a superficie de UM scan (o melhor alinhado) em vez de promediar 20 (sem espessura),
   usando a malha do scan de maior cobertura (185120, 79%) como base e acrescentando os outros so onde ela nao cobre ("construcao por cobertura" pedida pelo usuario).
+- SOLUCAO (v12): Poisson em profundidade 10 (nao 11) sobre a nuvem so da pele externa: rugosidade 126 um (v11 214; v10 580; scan unico 22), 0,00% de verso na vista de tras,
+  MeshLib 27 furos / 2 componentes / 978 mil tri. Mesmo aparo (0,005 / 3 mm) e reparo MeshLib. Poisson depth 9 apagou tudo com o aparo de 3 mm (nao usar sem relaxar).
+  Construcao por cobertura com a malha de UM scan nao compensou: o 185120 se encaixa na nuvem final com 0,5 mm RMS (deriva propria) e cobre so 48% da pele externa a < 1 mm (`base_por_cobertura.py`).
+  Receita final do Onix: nuvem_completa -> `orientar_normais --so-visiveis` -> `malha_poisson --profundidade 10` -> decimar p/ 1 M -> `malha_meshlib` -> `vista_malha` (verso ~0%).
