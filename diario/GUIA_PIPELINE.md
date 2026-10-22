@@ -108,3 +108,6 @@ Instabilidade sob carga sustentada em todos os nucleos: segfaults aleatorios do 
   {155001, 155502, 160710, 161037} = outra (painel largo ~1400x600). `alinhar_varios` com os 7 so ligou 3; com os 4 sozinhos liga todos
   (concordancia entre ancoras 0,06 graus / 0,6-1 mm; saida `Desktop\_p2_alinhB`, referencia 160710). Licao: se sobram scans "sem ligacao", olhar
   miniaturas antes de afrouxar limiares; podem ser OUTRA peca.
+- CORRECAO: os "buracos" da grade inferior do Onix nao sao falta de dado. Na regiao (x -470..360, y -225..-140, z<60) os 19 scans tem 2,86 M pontos
+  e 99,2% deles tem vizinho a < 2,5 mm na nuvem final (so 23,8 mil orfaos). As aberturas retangulares sao as aberturas REAIS da grade; antes pareciam
+  tampadas porque as chapas da mesa ficavam na frente na vista traseira. (Teste: pontos dos scans sem vizinho na nuvem final, por regiao.)
