@@ -208,6 +208,105 @@ def unir(proj, gA, gB, T, saida, nome_scan):
     return n
 
 
+def _T_do_quadro(pg, k):
+    """Transformacao do quadro de indice k (ordem dos ids) do scan: `pg` e uma 4x4 unica ou uma lista de
+    segmentos [{k0, k1, T}] (alinhamento por segmentos de quadros, que corrige a deriva do scan)."""
+    if isinstance(pg, (list, tuple)) and pg and isinstance(pg[0], dict):
+        for seg in pg:
+            if seg["k0"] <= k <= seg["k1"]:
+                return np.array(seg["T"])
+        raise ValueError(f"quadro {k} fora dos segmentos")
+    return np.array(pg)
+
+
+def unir_varios(proj, poses, base, saida, nome_scan, excluir=()):
+    """Como `unir`, para N scans: `poses` = {guid: 4x4 que leva o scan ao referencial comum}. O scan `base` e
+    copiado e tem TODAS as poses multiplicadas pela sua propria transformacao (ela pode nao ser a identidade);
+    os demais sao anexados com os ids deslocados. Devolve a contagem de quadros por scan."""
+    from revo_projeto import ler_ply, gravar_ply
+    saida = os.path.abspath(saida)
+    if os.path.exists(saida):
+        sys.exit(f"destino ja existe: {saida}")
+    pasta = os.path.join(saida, "data", nome_scan)
+    shutil.copytree(os.path.join(proj, "data", base), pasta)
+    for lixo in ("global_register_pose.pose",):          # poses do scan de origem: nao valem para o conjunto
+        f = os.path.join(pasta, "cache", lixo)
+        if os.path.exists(f):
+            os.remove(f)
+    ds = os.path.join(pasta, "cache", "frames.dataset")
+    contagem = {}
+    outros = [g for g in poses if g != base and g not in excluir]
+    with tempfile.TemporaryDirectory() as tmp:
+        with open(ds, "r+b") as h:
+            assert h.read(16) == SIG_REVO
+            h.seek(0)
+            h.write(SIG_SQL)
+        cn = sqlite3.connect(ds)
+        cn.execute("pragma journal_mode=DELETE")
+        # base: poses levadas por T[base]
+        linhas = cn.execute("select id, bin from FrameInfo order by id").fetchall()
+        for k, (id_, b) in enumerate(linhas):
+            cn.execute("update FrameInfo set bin=? where id=?", (_bin_com_pose(b, _T_do_quadro(poses[base], k)), id_))
+        contagem[base] = len(linhas)
+        proximo = cn.execute("select max(id) from FrameInfo").fetchone()[0] + 2
+        for g in outros:
+            src = os.path.join(proj, "data", g, "cache", "frames.dataset")
+            dsg = os.path.join(tmp, g + ".sqlite")
+            shutil.copy(src, dsg)
+            with open(dsg, "r+b") as h:
+                assert h.read(16) == SIG_REVO
+                h.seek(0)
+                h.write(SIG_SQL)
+            cn.execute("attach ? as b", (dsg,))
+            off = proximo - cn.execute("select min(id) from b.FrameInfo").fetchone()[0]
+            cn.execute("insert into FrameRGBD select id+?, version, type, width, height, data, weights from b.FrameRGBD", (off,))
+            for k, (id_, ver, seq, drop, gap, pose, opt, mk, mkd, b) in enumerate(
+                    cn.execute("select * from b.FrameInfo order by id").fetchall()):
+                cn.execute("insert into FrameInfo values (?,?,?,?,?,?,?,?,?,?)",
+                           (id_ + off, ver, seq, drop, gap, pose, opt, mk, mkd, _bin_com_pose(b, _T_do_quadro(poses[g], k))))
+            contagem[g] = cn.execute("select count(*) from b.FrameInfo").fetchone()[0]
+            proximo = cn.execute("select max(id) from FrameInfo").fetchone()[0] + 2
+            cn.commit()
+            cn.execute("detach b")
+            os.remove(dsg)
+            print(f"  anexado {g}: {contagem[g]} quadros", flush=True)
+        total = cn.execute("select count(*) from FrameInfo").fetchone()[0]
+        rgbd = cn.execute("select count(*) from FrameRGBD").fetchone()[0]
+        cn.commit()
+        cn.close()
+    for ext in ("-wal", "-shm", "-journal"):
+        if os.path.exists(ds + ext):
+            os.remove(ds + ext)
+    with open(ds, "r+b") as h:
+        h.write(SIG_REVO)
+    # preview 3D: todos os scans, ja no referencial comum
+    hA, pA = ler_ply(os.path.join(pasta, "raw_preview.ply"))
+    partes = []
+    for g in [base] + outros:
+        _, pg = ler_ply(os.path.join(proj, "data", g, "raw_preview.ply"))
+        pg = pg.copy()
+        T = _T_do_quadro(poses[g], 0)                       # so para o preview 3D (exibicao)
+        pg[:, :3] = pg[:, :3] @ T[:3, :3].T + T[:3, 3]
+        if pg.shape[1] >= 6:
+            pg[:, 3:6] = pg[:, 3:6] @ T[:3, :3].T
+        partes.append(pg)
+    gravar_ply(os.path.join(pasta, "raw_preview.ply"), hA, np.vstack(partes))
+    rv = os.path.join(pasta, "property.rvproj")
+    meta = json.load(open(rv, encoding="utf-8"))
+    meta["guid"] = nome_scan
+    if "vf_count" in meta:
+        meta["vf_count"] = rgbd
+    json.dump(meta, open(rv, "w", encoding="utf-8"), indent=4)
+    origem = [f for f in os.listdir(proj) if f.endswith(".revo")][0]
+    r = json.load(open(os.path.join(proj, origem), encoding="utf-8"))
+    no = next(x for x in r["nodes"] if x["guid"] == base)
+    r.update(guid=str(__import__("uuid").uuid4()), name=nome_scan, edit_time=str(int(__import__("time").time())),
+             nodes=[dict(no, guid=nome_scan, name=nome_scan)])
+    r["size"] = str(sum(os.path.getsize(os.path.join(dp, f)) for dp, _, fs in os.walk(os.path.join(saida, "data")) for f in fs))
+    json.dump(r, open(os.path.join(saida, nome_scan + ".revo"), "w", encoding="utf-8"), indent=4)
+    return dict(por_scan=contagem, total=total, rgbd=rgbd)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("projeto")
