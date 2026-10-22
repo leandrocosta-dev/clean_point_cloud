@@ -193,3 +193,8 @@ Instabilidade sob carga sustentada em todos os nucleos: segfaults aleatorios do 
 - DECISAO: a entrega e a v14 (`parachoque_malha_completa_1M_para_enviar.ply`). Nao fechar furos automaticamente; qualquer fechamento deve ser feito so em furos que o usuario apontar (ele compara v14 x versao nova lado a lado).
 - Scripts mantidos so como ferramenta, NAO usar por padrao: `fechar_furos_com_dado.py`, `remover_remendos_discordantes.py`. Verso em remendos: remover remendos cuja maioria das faces discorda das normais da nuvem.
 - O usuario pode abrir duas instancias do MeshInspector lado a lado e deixa eu capturar a tela inteira (ImageGrab all_screens) quando AVISA; sem aviso, nao capturar.
+
+## v19: so furinhos fechados (regra que funciona)
+- O usuario pediu: arrumar os furos pequenos da v14 sem repetir o erro da v15. Regra: perimetro <= 200 mm E remendo com dado MEDIDO dentro (>= 30% das amostras com >=3 pontos da nuvem a 1 mm) E p90 remendo-nuvem <= 3 mm; depois `remover_remendos_discordantes.py`. Script: `pipeline/fechar_furos_pequenos.py --ang-max 90 --plano-max 1 --perim-max 200 --frac-min 0.3`.
+- Resultado: 10 furinhos fechados (perimetros 80-179 mm), 0 remendos discordantes, verso 0,08% (igual a v14), 70 -> 60 furos; nenhuma abertura grande tocada (limite de perimetro). Arquivo: `parachoque_malha_completa_v19_furinhos_fechados.ply`.
+- Por que o perimetro ajuda: o erro da v15 foram furos de 476-713 mm (grade). Em furos pequenos a nuvem dentro do furo separa pinhole (frac 0,3-0,7) de abertura real (frac ~0).
