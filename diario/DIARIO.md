@@ -1,3 +1,5 @@
+# ATENCAO: comece por `diario/GUIA_PIPELINE.md` (receita, comandos, armadilhas, estado). Este diario e o historico.
+
 # Diario de bordo
 
 Cada aprendizado vira uma entrada com: o que se observou, a evidencia (numeros), a decisao, a versao (tag git) e o que ficou em aberto.
@@ -191,4 +193,6 @@ Objetivo do usuario: um pára-choque COMPLETO fundido e alinhado, para engenhari
 - Metrica de espessura local por PCA (sigma do plano) NAO serve para comparar fusoes: cresce com o raio (curvatura/estruturas finas) e mede 320 um mesmo apos suavizar; usar cortes ampliados comparando nuvens (zoom de uma faixa de 4 mm).
 - **Hipoteses refutadas**: viés de alinhamento pior nas extremidades (nao: uniforme 100-143 um); `weights` de FrameRGBD desalinhados pela limpeza (a coluna e NULL).
 - **Verificacoes finais do para-choque (2026-10-22)**: (1) `Import Model` do Revo (menu lateral da biblioteca; filtro *.stl *.obj *.ply; o clique em "Abrir" precisa de click_input apos preencher o caminho) abre a malha de 2 M triangulos: 1.015.779 vertices / 1.999.999 faces, cores cinza/laranja preservadas, faz item novo na biblioteca. `Data Import` e so transferencia do scanner (USB/Wi-Fi). Vistas: o menu View so tem Perspectiva/Ortogonal; a orientacao se faz por arrasto (orbita) e pelo cubo no canto. Face traseira aparece marrom; o aspecto granulado a distancia e z-fighting das duas paredes. (2) Topologia da malha: 96,4% numa casca, 0,02% nao-manifold, 1,8% contorno; 21 fragmentos < 20 mil triangulos removidos. (3) Nao ha como validar exatidao absoluta nem NX daqui.
+- **Mapa de confianca do para-choque (`pipeline/confianca.py`, 2026-10-22)**: apoio por scans independentes a < 1 mm: pontos do Revo 90,8% com >= 2 scans (83,3% com 3+); pontos acrescentados 99,5% com >= 2 scans (so 0,5% de um scan so); superficie final confirmada por >= 2 scans em 92,4%. Evidencia de que as regioes acrescentadas nao sao ruido/fantasma de um scan so; nao e exatidao absoluta (tolerancia 1 mm > ruido de 0,3-0,5 mm).
+- **Guia consolidado**: `diario/GUIA_PIPELINE.md` (receita por tipo de projeto, ordem exata dos comandos do Onix, NAO REPETIR, fatos da UI do Revo, estado dos projetos, cuidados com a maquina) + memoria (`guia-pipeline-completo`, `feedback-modo-de-trabalho`). Segundo projeto: limpeza dos frames rodando em `Desktop\_p2_limpo`.
 
