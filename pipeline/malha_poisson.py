@@ -12,8 +12,8 @@ from scipy.spatial import cKDTree
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from alinhar_varios import baixa_prioridade
 ap = argparse.ArgumentParser(); ap.add_argument("nuvem"); ap.add_argument("--saida", required=True)
-ap.add_argument("--profundidade", type=int, default=11); ap.add_argument("--quantil", type=float, default=0.02)
-ap.add_argument("--dist-max", type=float, default=1.5); ap.add_argument("--threads", type=int, default=8)
+ap.add_argument("--profundidade", type=int, default=11); ap.add_argument("--quantil", type=float, default=0.005)
+ap.add_argument("--dist-max", type=float, default=3.0); ap.add_argument("--threads", type=int, default=8)
 a = ap.parse_args(); baixa_prioridade(); t0 = time.time()
 pc = o3d.io.read_point_cloud(a.nuvem); P = np.asarray(pc.points)
 print(f"{len(P):,} pontos; Poisson profundidade {a.profundidade}", flush=True)
@@ -30,3 +30,9 @@ peq = np.isin(tri_cl, np.flatnonzero(n_tri < 2000))
 M.remove_triangles_by_mask(peq); M.remove_unreferenced_vertices()
 o3d.io.write_triangle_mesh(a.saida, M, write_vertex_normals=False)
 print(f"malha final: {len(M.vertices):,} vertices, {len(M.triangles):,} triangulos | {time.time()-t0:.0f}s")
+# validacao/reparo com MeshLib (mesmos numeros do MeshInspector): so grava a versao reparada ao lado, nunca sobrescreve
+from malha_meshlib import metricas, reparar
+from meshlib import mrmeshpy as mm
+ml = mm.loadMesh(a.saida); print("MeshLib antes :", metricas(ml))
+reparar(ml); print("MeshLib depois:", metricas(ml))
+mm.saveMesh(ml, a.saida.replace(".ply", "_reparada.ply"))

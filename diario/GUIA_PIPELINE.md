@@ -120,3 +120,13 @@ Instabilidade sob carga sustentada em todos os nucleos: segfaults aleatorios do 
   `Project20260920_143823/20260920_145309`. Nao foram incorporados (os 20 scans ja cobrem quase todos os furos). `20260922_083006` e um teste RGB do usuario: ignorar.
 - Varredura de todos os scans de D:\Projects (extensao por scan): `Desktop\_varredura_scans.csv`.
 - v8: v7 + `o3d.t.geometry.TriangleMesh.fill_holes(hole_size=16)` (so liga vertices de borda existentes, +~1000 triangulos): furos 146 -> 41. Dos 146 da v7: 118 tinham dado de >=3 scans, 14 de 1-2, 14 sem dado nos 20 scans.
+
+## MeshInspector / MeshLib na pipeline (2026-10-22, pedido do usuario)
+- O usuario confere as malhas no MeshInspector (e num visualizador 3Dconnexion); NAO usa NX. `C:\Program Files\MeshInspector\MeshInspector\MeshInspector.exe` abre o .ply por argumento.
+  Cores: azul = face de frente, amarelo-esverdeado = verso. Painel Information: Triangles, Vertices, Holes, Components.
+- `pip install meshlib` (ja no .venv): o motor do MeshInspector. `pipeline/malha_meshlib.py` reproduz o painel EXATAMENTE (v8: 980610 tri, 491002 vert, 538 furos, 384 componentes)
+  e repara (componentes < 2000 faces, arestas multiplas, furos <= 20 mm): v8 -> 71 furos, 1 componente. `malha_poisson.py` agora chama isso no fim (grava `*_reparada.ply`; aparo padrao 0,005/3 mm).
+- Armadilha: minhas contagens antigas (Open3D, "furos de 3-60 mm") davam 41-97 onde o MeshInspector dava 538: arestas nao-manifold (104) viram componentes/furos nele. SEMPRE medir com `malha_meshlib.py`.
+- `pipeline/meshinspector_ui.py` (print da janela via ctypes) existe mas nao foi validado: ele faz taskkill do MeshInspector; usar so com o usuario de acordo.
+- Cobertura real: pontos dos scans confirmados por >=3 scans a > 2 mm da malha: v5 3,44%; v8 3,31%; malha da nuvem com orfaos (v6) 2,75% (concentrados na calha, bordas da grade, cantos = estruturas finas/interna).
+- Faces invertidas: 10% dos triangulos da v8 tem normal oposta a da nuvem (agrupados na calha/cantos/grade) = as manchas amarelas do MeshInspector e brancas do visualizador do usuario.
