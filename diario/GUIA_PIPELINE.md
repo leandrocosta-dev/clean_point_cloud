@@ -30,6 +30,7 @@ Historico detalhado, numeros e erros em `diario/DIARIO.md`; este guia e a receit
 | `avaliar_fusao.py`, `faltando.py`, `buracos.py` | avaliar a fundida; o que dos segmentos NAO esta na fundida (`faltando.py` e o util; `buracos.py` por contorno nao serve p/ casca aberta) |
 | `fundir_proprio.py` -> `refinar_nuvem.py` -> `uniao_revo_propria.py` -> `malha_poisson.py` | fusao propria completa, suavizacao, uniao com a nuvem do Revo (cinza/laranja), malha de Poisson |
 | `confianca.py` | mapa de confianca: em quantos scans independentes cada ponto se apoia |
+| `limpar_fragmentos.py` | tira componentes isoladas pequenas (chapa solta a 82 mm) da nuvem e das malhas; `lacunas.py` = relatorio/imagem dos contornos abertos da malha |
 
 Pre-requisitos: `.venv` do projeto (open3d 0.20 CPU, numpy, scipy, pywinauto, pillow, psutil, matplotlib). Scripts com
 ProcessPool exigem `if __name__ == "__main__"`. Revo: `C:\Program Files\Revo Scan 6\RevoScan6.exe` 6.4.1.
