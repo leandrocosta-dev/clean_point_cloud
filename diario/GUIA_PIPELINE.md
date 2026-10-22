@@ -83,3 +83,14 @@ NAO medido: exatidao absoluta (precisa de referencia CMM/peca padrao), abertura 
 
 ## 8. Maquina (i7-13700K, 64 GB, GTX 1650 4 GB sem CUDA no Open3D)
 Instabilidade sob carga sustentada em todos os nucleos: segfaults aleatorios do Open3D (3221225477/139), `cKDTree.query` devolvendo indice impossivel, VS Code/PC caindo; Windows registrou WHEA e "memoria defeituosa". Sempre: `baixa_prioridade()` (BELOW_NORMAL), OMP <= 3-4 threads x 4 processos, tarefas pesadas em processo isolado com repeticao (`isolado()`), validar resultados (`vizinho()`), checkpoints em disco, esperas curtas. Recomendar ao usuario BIOS/microcode Intel e teste de memoria. GPU nao compensa.
+
+## Tiras da MESA que sobrevivem ao consenso (achado de 2026-10-22, usuario viu na malha do Onix)
+- Causa: a mesa onde a peca estava apoiada fica FIXA em relacao a peca nos scans da MESMA pose de repouso; scans consecutivos
+  (ex.: 194205..195038) se apoiam entre si e passam em `limpar_por_consenso` (>=2 outros scans). O usuario confirma: no scan com a
+  peca virada pra cima essas aparas nao existem.
+- Como achar: (1) planos grandes e finos (resid ~0,2 mm) em componentes soltos/quase soltos; (2) pontos apoiados SO por um grupo de
+  scans consecutivos (agrupar scans por co-apoio em pontos com 2..5 scans) e paralelos a esse plano. Scripts de exploracao ficaram em %TEMP% (suporte_mask, t7).
+- Resultado v2: removidos 95 mil pontos (0,62%) da mesa do grupo 194205-194821/195038 (plano normal ~(0,54;0,76;0,36) no ref. PCA). Outras tiras
+  (outros grupos de pose) NAO foram provadas; apoio "so de um grupo" tambem pega superficie REAL vista so por esse grupo (canto esquerdo), entao nao
+  remover cegamente por apoio.
+- Melhor solucao futura: limpar a mesa ANTES do consenso, por scan, ajustando o plano da mesa nos quadros originais (referencia = scan virado pra cima).
