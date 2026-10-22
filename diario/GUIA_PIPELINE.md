@@ -98,3 +98,7 @@ Instabilidade sob carga sustentada em todos os nucleos: segfaults aleatorios do 
   vistas so por esses scans e por nenhum dos 11 anteriores: removidas (suporte exclusivo do grupo + normal ~ normal da mesa + conexo a semente flutuante).
   Teste que funcionou: "nenhum scan de outra pose enxerga esse ponto" + chapa que flutua acima do casco. v4 = 14,99 M pontos, malha 14,4 M tri; entrega atualizada.
   Placa de controle real (supp. por todos os scans) NAO foi removida. Ainda falta confirmacao visual do usuario.
+- Verificacao das placas removidas (mesa): das colunas (x,y) das placas que scans de OUTRAS poses cobrem (35% dos pontos), so 6,6% tem superficie
+  na altura da placa; em 93% essas poses veem superficie em outra altura mas nada ali => a placa nao existe nessas poses (consistente com mesa).
+  Nos 65% restantes as outras poses nao olham a regiao: ali a remocao se apoia so na geometria (chapa plana flutuando acima do casco, normal da mesa).
+  Consequencia: a regiao da grade inferior ficou com buracos (sem dado real de outras poses).
