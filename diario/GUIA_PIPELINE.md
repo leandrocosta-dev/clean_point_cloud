@@ -166,3 +166,11 @@ Instabilidade sob carga sustentada em todos os nucleos: segfaults aleatorios do 
   rugosidade mediana 22 um (= scan unico), verso 0,17%, 96 furos, 34 componentes, 933 mil tri. Poisson sobre as pecas NAO ajuda (528 um: amplifica degraus de emenda).
 - Os 19% restantes so tem dado nos scans INTERNOS. Os 14 internos servem p/ uma malha da face interna SEPARADA (ou p/ a espessura da parede), nao p/ preencher a externa.
 - Como o usuario achou o problema: comparou lado a lado a malha do scan unico (lisa) com a uniao (pontilhada) no 3Dconnexion e disse "precisa mudar o conceito: maior scan como base e inserir so os que preenchem lacunas".
+
+## ESTADO ao fim da sessao (2026-10-22) - RETOMAR DAQUI
+- Entrega atual: v13 (`Desktop\Onix_parachoque_traseiro_ENTREGA\...para_enviar.ply`): lisa (22 um), mas com VAZIOS (aparo --tol-limpa 1.5 cortou areas boas do scan). O usuario comparou com o scan unico 185120 e disse que o scan unico "sobressai em muito".
+- Em andamento: `Desktop\_onix_cob6` (log `_onix_cob6.log`): construcao por cobertura com `--tol-limpa 5.0 --tol-lacuna 2.0 --so-externos --apenas <6 externos> --extras _onix_extras.json`. Ao terminar: montar (`remove_duplicated*`, `malha_meshlib --min-faces 1500 --furo-max 25`),
+  medir rugosidade/vista_malha/furos, comparar com o scan unico e v13; so entao trocar a entrega e enviar.
+- Scans do dia 20/09 (153720, 153912) tambem sao INTERNOS (orientacao 4%): nao preenchem a face externa.
+- O usuario nao usa NX; confere no 3Dconnexion Viewer / MeshInspector. Nenhuma versao apos a v5 foi aprovada por ele.
+- Projeto 2: grupo B (painel) e grupo A entregues; ver memoria projeto2-duas-pecas.

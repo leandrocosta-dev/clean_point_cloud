@@ -28,9 +28,10 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from alinhar_varios import baixa_prioridade
 
 
-def alinhar_e_limpar(proj, scan, ind, pj, Tr, E, tE, tol_limpa):
-    seg = max(ind, key=lambda s: len(np.load(s["arquivo"])))
-    T0 = Tr @ np.array(next(x for x in pj if x["seg"] == seg["seg"])["T"])
+def alinhar_e_limpar(proj, scan, ind, pj, Tr, E, tE, tol_limpa, T0=None):
+    if T0 is None:
+        seg = max(ind, key=lambda s: len(np.load(s["arquivo"])))
+        T0 = Tr @ np.array(next(x for x in pj if x["seg"] == seg["seg"])["T"])
     M = o3d.io.read_triangle_mesh(os.path.join(proj, "data", scan, "fuse_mesh.ply")); M.transform(T0)
     S = M.sample_points_uniformly(600_000); S.estimate_normals()
     T = np.eye(4)
@@ -59,6 +60,8 @@ def main():
     ap.add_argument("--tol-limpa", type=float, default=1.5); ap.add_argument("--tol-lacuna", type=float, default=1.5)
     ap.add_argument("--ganho-min", type=float, default=0.003); ap.add_argument("--margem", type=float, default=1.0)
     ap.add_argument("--so-externos", action="store_true", help="ignora scans cuja malha esta orientada p/ dentro (viram a parede por dentro: sao da face INTERNA, ~1,6 mm deslocados)")
+    ap.add_argument("--extras", help="json: lista de {proj, scan, T} de scans de OUTROS projetos/dias (T = pose inicial scan->referencial)")
+    ap.add_argument("--apenas", nargs="*", help="so estes scans do projeto principal (nomes)")
     ap.add_argument("--min-tri", type=int, default=500); ap.add_argument("--abertura", type=float, default=3.0)
     a = ap.parse_args(); baixa_prioridade(); t0 = time.time()
     os.makedirs(os.path.join(a.saida, "scans"), exist_ok=True)
@@ -68,14 +71,18 @@ def main():
     tE = cKDTree(Ep); En = np.asarray(E.normals)
     # 1. alinhar e aparar cada scan
     meshes, cobs = {}, {}
-    for scan in sorted(ind):
+    fontes = [(scan, a.projeto, scan, ind[scan], pj[scan], None) for scan in sorted(ind) if not a.apenas or scan in a.apenas]
+    if a.extras:
+        for e in json.load(open(a.extras)):
+            fontes.append(("extra_" + e["scan"], e["proj"], e["scan"], None, None, np.array(e["T"])))
+    for scan, proj_f, real, ind_s, pj_s, T_ini in fontes:
         f = os.path.join(a.saida, "scans", scan + ".ply")
         if os.path.exists(f):
             M = o3d.io.read_triangle_mesh(f)
         else:
-            if not os.path.exists(os.path.join(a.projeto, "data", scan, "fuse_mesh.ply")):
+            if not os.path.exists(os.path.join(proj_f, "data", real, "fuse_mesh.ply")):
                 print(scan, "sem fuse_mesh, ignorado"); continue
-            M, fit, rmse = alinhar_e_limpar(a.projeto, scan, ind[scan], pj[scan], Tr, E, tE, a.tol_limpa)
+            M, fit, rmse = alinhar_e_limpar(proj_f, real, ind_s, pj_s, Tr, E, tE, a.tol_limpa, T_ini)
             o3d.io.write_triangle_mesh(f, M, write_vertex_normals=False)
         if len(M.triangles) == 0:
             continue
