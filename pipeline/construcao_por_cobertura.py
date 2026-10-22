@@ -60,6 +60,8 @@ def main():
     ap.add_argument("--tol-limpa", type=float, default=1.5); ap.add_argument("--tol-lacuna", type=float, default=1.5)
     ap.add_argument("--ganho-min", type=float, default=0.003); ap.add_argument("--margem", type=float, default=1.0)
     ap.add_argument("--so-externos", action="store_true", help="ignora scans cuja malha esta orientada p/ dentro (viram a parede por dentro: sao da face INTERNA, ~1,6 mm deslocados)")
+    ap.add_argument("--so-internos", action="store_true", help="o inverso: usa so os scans da face INTERNA, sem inverter (malha fica com normais para dentro da cavidade)")
+    ap.add_argument("--cob-tol", type=float, default=1.0, help="mm: distancia a nuvem externa que conta como cobertura (use ~4 para a face interna)")
     ap.add_argument("--extras", help="json: lista de {proj, scan, T} de scans de OUTROS projetos/dias (T = pose inicial scan->referencial)")
     ap.add_argument("--apenas", nargs="*", help="so estes scans do projeto principal (nomes)")
     ap.add_argument("--min-tri", type=int, default=500); ap.add_argument("--abertura", type=float, default=3.0)
@@ -90,11 +92,13 @@ def main():
         _, jn = tE.query(Cn[::7], workers=8); conc = float(np.mean(np.einsum("ij,ij->i", Tn[::7], En[jn]) > 0))
         if conc < 0.5 and a.so_externos:
             print(f"{scan}: orientacao concorda {conc*100:.0f}% -> scan da face INTERNA, ignorado (--so-externos)", flush=True); continue
-        if conc < 0.5:                       # malha do scan orientada para dentro: inverte o scan inteiro (faces de verso viram de frente)
+        if conc >= 0.5 and a.so_internos:
+            print(f"{scan}: orientacao concorda {conc*100:.0f}% -> scan externo, ignorado (--so-internos)", flush=True); continue
+        if conc < 0.5 and not a.so_internos:                       # malha do scan orientada para dentro: inverte o scan inteiro (faces de verso viram de frente)
             Tt = np.asarray(M.triangles)[:, ::-1].copy(); M.triangles = o3d.utility.Vector3iVector(Tt); M.compute_triangle_normals()
-        print(f"{scan}: orientacao concorda com a nuvem externa em {conc*100:.0f}%" + (" -> invertida" if conc < 0.5 else ""), flush=True)
+        print(f"{scan}: orientacao concorda com a nuvem externa em {conc*100:.0f}%" + (" -> invertida" if conc < 0.5 and not a.so_internos else ""), flush=True)
         meshes[scan] = M
-        d, _ = cKDTree(amostrar(M)).query(Ea, workers=8); cobs[scan] = d < 1.0
+        d, _ = cKDTree(amostrar(M)).query(Ea, workers=8); cobs[scan] = d < a.cob_tol
         print(f"{scan}: {len(M.triangles):,} tri | cobre {cobs[scan].mean()*100:.1f}% da pele externa a 1 mm ({time.time()-t0:.0f}s)", flush=True)
     # 2. base + guloso
     base = max(cobs, key=lambda s: cobs[s].mean()); ordem = [dict(scan=base, papel="base", cobertura=float(cobs[base].mean()))]
