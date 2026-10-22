@@ -102,3 +102,9 @@ Instabilidade sob carga sustentada em todos os nucleos: segfaults aleatorios do 
   na altura da placa; em 93% essas poses veem superficie em outra altura mas nada ali => a placa nao existe nessas poses (consistente com mesa).
   Nos 65% restantes as outras poses nao olham a regiao: ali a remocao se apoia so na geometria (chapa plana flutuando acima do casco, normal da mesa).
   Consequencia: a regiao da grade inferior ficou com buracos (sem dado real de outras poses).
+
+## Projeto 2 (D:\Projects\Project20260607_154154): sao DUAS PECAS, nao uma
+- Miniaturas dos scans (`Desktop\_p2_alinh\miniaturas.png`): {154154, 154453, 154644} = uma peca (lateral/para-lama + frente);
+  {155001, 155502, 160710, 161037} = outra (painel largo ~1400x600). `alinhar_varios` com os 7 so ligou 3; com os 4 sozinhos liga todos
+  (concordancia entre ancoras 0,06 graus / 0,6-1 mm; saida `Desktop\_p2_alinhB`, referencia 160710). Licao: se sobram scans "sem ligacao", olhar
+  miniaturas antes de afrouxar limiares; podem ser OUTRA peca.
