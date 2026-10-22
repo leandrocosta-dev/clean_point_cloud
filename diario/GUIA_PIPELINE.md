@@ -204,3 +204,10 @@ Instabilidade sob carga sustentada em todos os nucleos: segfaults aleatorios do 
 ## v20 APROVADA pelo usuario (fachada externa)
 - O usuario abriu a v20 (`_onix_cob6/v20_bruta.ply` = v19_rep + 9 furos de borda lisa <=150 mm fechados) e disse "esta muito boa". Eu a havia descartado por perder 3-4 manchas brancas na vista por tras; o julgamento visual dele no MeshInspector vale mais que a minha heuristica de vista. Entrega externa: `Onix_parachoque_traseiro_ENTREGA\parachoque_malha_externa_v20_APROVADA.ply`. Regra efetiva: `fechar_furos_pequenos.py --ang-max 10 --plano-max 0.05 --perim-max 150 --tol 99` sobre a v19.
 - Proximo: face interna (pedido do usuario): `construcao_por_cobertura.py --so-internos --tol-limpa 40 --cob-tol 4` (flags novas), pasta `_onix_int`.
+
+## Face interna (feita)
+- Comando: `construcao_por_cobertura.py ... --saida _onix_int --so-internos --tol-limpa 40 --margem 0.0 --cob-tol 4 --extras _onix_extras.json` (ignora os 6 externos; usa 14 scans internos do projeto + os 2 do dia 20/09 [extras]; sem inverter: normais apontam para a cavidade). 22 min; rodar com laco de repeticao por causa das quedas do Open3D.
+- Base 192440 (77% de cobertura a 4 mm); +192628, 195345, 195038, 194529, 190944 -> cobertura 99,2%. Depois: remover duplicados/nao-manifold (Open3D), `malha_meshlib.py --min-faces 1500 --furo-max 25` (furos 1059->122, componentes 474->77), decimar a 1,15 M (quadric).
+- Medidas da interna 1M: 29,6 MB, 123 furos, concordancia 15% com normais externas (esperado: normais para dentro; no MeshInspector vista de fora aparece AMARELA/verso), distancia a pele externa: mediana 1,97 mm (≈ espessura da parede + costelas), p90 15,6 mm, p99 34,9 mm (nervuras/fixacoes internas).
+- Limite: o alinhamento dos scans internos vem do ICP contra a nuvem EXTERNA (a pele interna fica ~2 mm de deslocamento real = espessura), nao contra uma referencia interna; espessura nao foi conferida contra medida fisica.
+- Arquivos: `parachoque_malha_INTERNA_1M.ply` (para enviar) e `parachoque_malha_INTERNA_completa.ply` (2,6 M tri).
