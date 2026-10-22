@@ -62,13 +62,17 @@ def main():
     ap.add_argument("--so-externos", action="store_true", help="ignora scans cuja malha esta orientada p/ dentro (viram a parede por dentro: sao da face INTERNA, ~1,6 mm deslocados)")
     ap.add_argument("--so-internos", action="store_true", help="o inverso: usa so os scans da face INTERNA, sem inverter (malha fica com normais para dentro da cavidade)")
     ap.add_argument("--cob-tol", type=float, default=1.0, help="mm: distancia a nuvem externa que conta como cobertura (use ~4 para a face interna)")
+    ap.add_argument("--espessura", type=float, default=0.0, help="mm: alinha/apara contra a nuvem externa deslocada para DENTRO por essa espessura (face interna)")
     ap.add_argument("--extras", help="json: lista de {proj, scan, T} de scans de OUTROS projetos/dias (T = pose inicial scan->referencial)")
     ap.add_argument("--apenas", nargs="*", help="so estes scans do projeto principal (nomes)")
     ap.add_argument("--min-tri", type=int, default=500); ap.add_argument("--abertura", type=float, default=3.0)
     a = ap.parse_args(); baixa_prioridade(); t0 = time.time()
     os.makedirs(os.path.join(a.saida, "scans"), exist_ok=True)
     ind = json.load(open(os.path.join(a.pasta_seg, "segmentos_indice.json"))); pj = json.load(open(a.direto))["segmentos"]; Tr = np.load(a.tseg)
-    E = o3d.io.read_point_cloud(a.externa); E.estimate_normals(o3d.geometry.KDTreeSearchParamHybrid(radius=4, max_nn=30))
+    E = o3d.io.read_point_cloud(a.externa)
+    if a.espessura:
+        En0 = np.asarray(E.normals).copy(); E.points = o3d.utility.Vector3dVector(np.asarray(E.points) - a.espessura * En0); E.normals = o3d.utility.Vector3dVector(En0)
+    E.estimate_normals(o3d.geometry.KDTreeSearchParamHybrid(radius=4, max_nn=30))
     Ep = np.asarray(E.points); rng = np.random.default_rng(0); Ea = Ep[rng.choice(len(Ep), 1_500_000, replace=False)]   # amostra para cobertura
     tE = cKDTree(Ep); En = np.asarray(E.normals)
     # 1. alinhar e aparar cada scan
