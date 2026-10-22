@@ -142,3 +142,12 @@ Instabilidade sob carga sustentada em todos os nucleos: segfaults aleatorios do 
 - Ordem nova do final da receita C: ... `uniao_revo_propria` -> `orientar_normais` -> `malha_poisson` (gera `*_reparada.ply`) -> `malha_meshlib` -> `vista_malha` (verso < 1%).
 - O usuario NAO usa NX: confere no MeshInspector e num visualizador 3Dconnexion. Validacao do usuario so da v5 ("limpo"); v10 ainda nao conferida por ele.
 - Maior scan do Onix: 20260921_185120 (1,58 M tri, 1,17 m2, cobre 79% da nuvem final); scans de outro dia: Project20260920_150020 (153720, 153912), Project20260920_143823/145309.
+
+## Malha unica vs uniao (2026-10-22): a uniao estava PIOR que o melhor scan sozinho
+- Usuario comparou lado a lado: malha do scan 185120 (Revo, lisa) vs v10 (pontilhada, bordas esfiapadas). Rugosidade local (RMS de plano em r=2,5 mm, vertices da malha): scan unico 22 um;
+  v5 524 um; v10 580 um. Causa 1: a malha da uniao tem DUAS PELES (externa + interna, ~3 mm) porque scans virados pra cima veem o lado de dentro; Poisson mistura as duas.
+  Causa 2 (restante): espessura da nuvem fundida de 20 scans (desencontro fino entre scans ~0,3 mm), que o Revo nao mostra num scan so.
+- Correcao parcial: `orientar_normais.py --so-visiveis` grava so a pele externa (z-buffer, tol 0,8 mm): 8,4 M pontos; Poisson + reparo: 44 furos, 16 componentes; vista de tras 99,98% frente.
+  Rugosidade 380 um; com Taubin (30 it, lambda 0,5, mu -0,53) 214 um (deslocamento medio 0,4 mm). Taubin 60: 181 um.
+- AINDA NAO RESOLVIDO: chegar perto dos 22 um do scan unico. Caminho provavel: escolher, por regiao, a superficie de UM scan (o melhor alinhado) em vez de promediar 20 (sem espessura),
+  usando a malha do scan de maior cobertura (185120, 79%) como base e acrescentando os outros so onde ela nao cobre ("construcao por cobertura" pedida pelo usuario).

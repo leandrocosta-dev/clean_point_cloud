@@ -13,6 +13,7 @@ import open3d as o3d
 
 ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
 ap.add_argument("nuvem"); ap.add_argument("--saida", required=True)
+ap.add_argument("--so-visiveis", action="store_true", help="grava so os pontos visiveis de fora (pele externa), descartando a parede interna")
 ap.add_argument("--celula", type=float, default=1.0); ap.add_argument("--tol", type=float, default=0.8); ap.add_argument("--cone", type=float, default=65.0)
 a = ap.parse_args()
 pc = o3d.io.read_point_cloud(a.nuvem); P = np.asarray(pc.points); N = np.asarray(pc.normals).copy()
@@ -45,4 +46,6 @@ flip = visto & ~bom
 Nq[flip] *= -1
 print(f"visiveis de fora: {visto.mean()*100:.1f}% | normais viradas p/ fora: {flip.sum():,} ({flip.mean()*100:.2f}%)")
 pc.normals = o3d.utility.Vector3dVector((Nq @ V.T).astype(np.float64))
+if a.so_visiveis:
+    pc = pc.select_by_index(np.flatnonzero(visto).tolist()); print(f"so pele externa: {len(pc.points):,} pontos")
 o3d.io.write_point_cloud(a.saida, pc, write_ascii=False)
