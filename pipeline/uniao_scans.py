@@ -215,7 +215,7 @@ def _T_do_quadro(pg, k):
         for seg in pg:
             if seg["k0"] <= k <= seg["k1"]:
                 return np.array(seg["T"])
-        raise ValueError(f"quadro {k} fora dos segmentos")
+        return None                                   # quadro fora dos segmentos escolhidos: nao entra
     return np.array(pg)
 
 
@@ -245,9 +245,15 @@ def unir_varios(proj, poses, base, saida, nome_scan, excluir=()):
         cn.execute("pragma journal_mode=DELETE")
         # base: poses levadas por T[base]
         linhas = cn.execute("select id, bin from FrameInfo order by id").fetchall()
+        contagem[base] = 0
         for k, (id_, b) in enumerate(linhas):
-            cn.execute("update FrameInfo set bin=? where id=?", (_bin_com_pose(b, _T_do_quadro(poses[base], k)), id_))
-        contagem[base] = len(linhas)
+            Tk = _T_do_quadro(poses[base], k)
+            if Tk is None:
+                cn.execute("delete from FrameInfo where id=?", (id_,))
+                cn.execute("delete from FrameRGBD where id=?", (id_,))
+                continue
+            cn.execute("update FrameInfo set bin=? where id=?", (_bin_com_pose(b, Tk), id_))
+            contagem[base] += 1
         proximo = cn.execute("select max(id) from FrameInfo").fetchone()[0] + 2
         for g in outros:
             src = os.path.join(proj, "data", g, "cache", "frames.dataset")
@@ -262,9 +268,13 @@ def unir_varios(proj, poses, base, saida, nome_scan, excluir=()):
             cn.execute("insert into FrameRGBD select id+?, version, type, width, height, data, weights from b.FrameRGBD", (off,))
             for k, (id_, ver, seq, drop, gap, pose, opt, mk, mkd, b) in enumerate(
                     cn.execute("select * from b.FrameInfo order by id").fetchall()):
+                Tk = _T_do_quadro(poses[g], k)
+                if Tk is None:
+                    cn.execute("delete from FrameRGBD where id=?", (id_ + off,))
+                    continue
                 cn.execute("insert into FrameInfo values (?,?,?,?,?,?,?,?,?,?)",
-                           (id_ + off, ver, seq, drop, gap, pose, opt, mk, mkd, _bin_com_pose(b, _T_do_quadro(poses[g], k))))
-            contagem[g] = cn.execute("select count(*) from b.FrameInfo").fetchone()[0]
+                           (id_ + off, ver, seq, drop, gap, pose, opt, mk, mkd, _bin_com_pose(b, Tk)))
+                contagem[g] = contagem.get(g, 0) + 1
             proximo = cn.execute("select max(id) from FrameInfo").fetchone()[0] + 2
             cn.commit()
             cn.execute("detach b")
@@ -285,7 +295,7 @@ def unir_varios(proj, poses, base, saida, nome_scan, excluir=()):
     for g in [base] + outros:
         _, pg = ler_ply(os.path.join(proj, "data", g, "raw_preview.ply"))
         pg = pg.copy()
-        T = _T_do_quadro(poses[g], 0)                       # so para o preview 3D (exibicao)
+        T = np.array(poses[g][0]["T"]) if isinstance(poses[g], (list, tuple)) and poses[g] and isinstance(poses[g][0], dict) else np.array(poses[g])   # so preview 3D (exibicao)
         pg[:, :3] = pg[:, :3] @ T[:3, :3].T + T[:3, 3]
         if pg.shape[1] >= 6:
             pg[:, 3:6] = pg[:, 3:6] @ T[:3, :3].T
