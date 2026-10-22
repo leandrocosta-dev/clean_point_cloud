@@ -130,3 +130,15 @@ Instabilidade sob carga sustentada em todos os nucleos: segfaults aleatorios do 
 - `pipeline/meshinspector_ui.py` (print da janela via ctypes) existe mas nao foi validado: ele faz taskkill do MeshInspector; usar so com o usuario de acordo.
 - Cobertura real: pontos dos scans confirmados por >=3 scans a > 2 mm da malha: v5 3,44%; v8 3,31%; malha da nuvem com orfaos (v6) 2,75% (concentrados na calha, bordas da grade, cantos = estruturas finas/interna).
 - Faces invertidas: 10% dos triangulos da v8 tem normal oposta a da nuvem (agrupados na calha/cantos/grade) = as manchas amarelas do MeshInspector e brancas do visualizador do usuario.
+
+## Manchas "de verso" (amarelo no MeshInspector / branco no 3Dconnexion) = normais da nuvem orientadas pra dentro (2026-10-22)
+- Sintoma: v5, v8 e v9 pareciam IDENTICAS no visualizador do usuario, com manchas brancas na calha, grade, cantos, apesar de furos 293 -> 41 -> 73 nas minhas contagens.
+- Reproduzir a vista por codigo: `python pipeline/vista_malha.py malha.ply --saida vista.png` (raios ortograficos por tras; azul = frente, amarelo = verso, branco = nada).
+  v8/v9: 11% dos pixels com malha eram VERSO; em 64% deles ha so UMA camada (folha de verso), nao pele externa faltando.
+- Causa: normais da fusao orientadas pelo lado de onde a camera viu (`visada`); onde so scan visto por dentro mediu a parede, o Poisson sai de verso.
+- Correcao: `python pipeline/orientar_normais.py nuvem.ply --saida nuvem_orientada.ply` (z-buffer ortografico, celula 1 mm, tol 0,8 mm — NAO 3 mm, que pega a pele interna da parede;
+  25 direcoes num cone de 65 graus; vira p/ fora a normal de ponto visivel de fora que nenhuma direcao aprova): 9,7% das normais viradas.
+  Depois `malha_poisson.py` (aparo 0,005/3 + reparo MeshLib) e decimar p/ 1 M. v10: verso na vista de tras 10,9% -> 0,02%; MeshLib 61 furos, 3 componentes, 982 mil tri.
+- Ordem nova do final da receita C: ... `uniao_revo_propria` -> `orientar_normais` -> `malha_poisson` (gera `*_reparada.ply`) -> `malha_meshlib` -> `vista_malha` (verso < 1%).
+- O usuario NAO usa NX: confere no MeshInspector e num visualizador 3Dconnexion. Validacao do usuario so da v5 ("limpo"); v10 ainda nao conferida por ele.
+- Maior scan do Onix: 20260921_185120 (1,58 M tri, 1,17 m2, cobre 79% da nuvem final); scans de outro dia: Project20260920_150020 (153720, 153912), Project20260920_143823/145309.

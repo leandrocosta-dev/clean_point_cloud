@@ -4,7 +4,7 @@
 
 No MeshInspector a face de FRENTE aparece azul e o VERSO amarelo-esverdeado: manchas amarelas = faces invertidas ou furo
 mostrando a parede de tras. Os NUMEROS (furos, componentes) vem de `malha_meshlib.py`, que usa o mesmo motor e bate com o painel.
-Fecha uma instancia anterior do MeshInspector (so a dele). A tela precisa estar ligada; o aviso inicial e dispensado com ESC.
+Abre uma NOVA instancia (nao fecha as que ja estao abertas). A tela precisa estar ligada; o aviso inicial e dispensado com ESC.
 """
 import argparse
 import ctypes
@@ -19,7 +19,7 @@ EXE = r"C:\Program Files\MeshInspector\MeshInspector\MeshInspector.exe"
 user32 = ctypes.windll.user32
 
 
-def _janela():
+def _janelas():
     achada = []
     @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
     def cb(h, _):
@@ -30,7 +30,7 @@ def _janela():
                 achada.append(h)
         return True
     user32.EnumWindows(cb, 0)
-    return achada[0] if achada else None
+    return achada
 
 
 def _tecla(vk):
@@ -38,12 +38,14 @@ def _tecla(vk):
 
 
 def capturar(malha, saida, espera=25):
-    subprocess.run(["taskkill", "/IM", "MeshInspector.exe", "/F"], capture_output=True)
-    time.sleep(2)
-    subprocess.Popen([EXE, os.path.abspath(malha)])
+    antes = set(_janelas())
+    subprocess.Popen([EXE, os.path.abspath(malha)])             # nova instancia; nao fecha nenhuma que ja esteja aberta
     t0 = time.time(); h = None
-    while time.time() - t0 < 120 and not h:
-        time.sleep(2); h = _janela()
+    nome = os.path.splitext(os.path.basename(malha))[0]
+    while time.time() - t0 < 180 and not h:
+        time.sleep(2)
+        novas = [w for w in _janelas() if w not in antes]
+        h = novas[0] if novas else None
     if not h:
         raise RuntimeError("janela do MeshInspector nao apareceu")
     time.sleep(espera)
