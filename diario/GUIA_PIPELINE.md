@@ -177,3 +177,11 @@ Instabilidade sob carga sustentada em todos os nucleos: segfaults aleatorios do 
 - v14 (cob6: `--tol-limpa 5.0 --tol-lacuna 2.0 --so-externos --apenas <6 externos>`): base 185733 + 185120 (+374 mil tri), 185633, 192128, 191925; cobertura 80,7%; reparo MeshLib `--min-faces 1500 --furo-max 25`:
   1,33 M tri, 70 furos, 34 componentes, rugosidade mediana 21 um, verso 0,08%; vista de tras sem os vazios da v13 (aparo de 1,5 mm cortava areas boas; 5 mm so tira mesa/cenario). Entregue em `Desktop\Onix_parachoque_traseiro_ENTREGA`.
 - Teste de soldagem de emendas na v14 (Open3D `merge_close_vertices`): eps 0,4 -> 64 furos/30 comp.; eps 0,8 -> 53 furos/22 comp. mas perde 36% dos triangulos (colapsa detalhe). NAO usar; ficar com a v14 como esta.
+
+## Fechar furos so onde ha dado (v15) e o que o usuario aprovou
+- O usuario viu a v14 e disse "gostei do resultado ate aqui" (aprovacao da linha: so scans EXTERNOS + construcao por cobertura). A v15 foi gerada depois e ainda nao foi vista por ele.
+- Furos grandes da v14 (70 no MeshLib) NAO sao todos aberturas reais: os de perimetro 6,8 m e 5,8 m sao a borda da casca. Teste decisivo: simular `fillHole` numa copia e medir a distancia (p90) dos triangulos do remendo a nuvem externa. Remendo a < 5,5 mm da nuvem = ha superficie medida (aparo apagou) -> fechar; remendo no ar = abertura real -> manter. Resultado: 65 de 70 fechados, restam 5 (bordas). Script: `pipeline/fechar_furos_com_dado.py`.
+- Usar `fillHoleNicely` com `triangulateOnly=False` (MeshLib); `FillHoleNicelySettings`, nao `...Params`. `findHoleRepresentiveEdges` (sem o "ta").
+- ARMADILHA: vista por tras da v15 mostra verso 3,9% (v14: 0,08%) porque remendos cobrem reentrancias. Inverter faces do remendo uma a uma pelas normais da nuvem QUEBRA a topologia (8.497 furos, 6.746 componentes) -> nao fazer. Pendente: orientar o remendo como um todo (por componente) ou reduzir o verso de outro modo.
+- Escrever malha com Open3D apos mexer em indices pode dividir vertices; gravar sempre pelo MeshLib e validar com `malha_meshlib.py`.
+- Capturar tela do MeshInspector: `meshinspector_ui.py` falhou com "empty image" quando a janela estava minimizada; funcionou chamando ShowWindow(h,9) e (h,3) e SetForegroundWindow antes de GetWindowRect. O usuario NAO quer prints enviados a ele quando esta operando o PC (ele mesmo olha).
