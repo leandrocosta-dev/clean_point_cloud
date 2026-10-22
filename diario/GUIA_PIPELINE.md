@@ -94,3 +94,7 @@ Instabilidade sob carga sustentada em todos os nucleos: segfaults aleatorios do 
   (outros grupos de pose) NAO foram provadas; apoio "so de um grupo" tambem pega superficie REAL vista so por esse grupo (canto esquerdo), entao nao
   remover cegamente por apoio.
 - Melhor solucao futura: limpar a mesa ANTES do consenso, por scan, ajustando o plano da mesa nos quadros originais (referencia = scan virado pra cima).
+- ATUALIZACAO (mesmo dia): janela de scans da mesma pose = 193159..195345 (9 scans, 19:31-19:53). Chapas finas FORA do casco (z 62-87 no ref. PCA, y -145..-220)
+  vistas so por esses scans e por nenhum dos 11 anteriores: removidas (suporte exclusivo do grupo + normal ~ normal da mesa + conexo a semente flutuante).
+  Teste que funcionou: "nenhum scan de outra pose enxerga esse ponto" + chapa que flutua acima do casco. v4 = 14,99 M pontos, malha 14,4 M tri; entrega atualizada.
+  Placa de controle real (supp. por todos os scans) NAO foi removida. Ainda falta confirmacao visual do usuario.
