@@ -28,11 +28,21 @@ def processar(ui, guid, pasta, args):
     r = {"guid": guid, "pasta_biblioteca": pasta}
     t0 = time.time()
     ui.abrir_scan(guid, pasta)
-    r["fusao"] = ui.fundir()
-    r["malha"] = ui.malha()
+    if getattr(args, "so_exportar", False):
+        r["fusao"] = r["malha"] = None                 # usa o que ja esta no scan (maior contador de nome)
+    else:
+        r["fusao"] = ui.fundir()
+        r["malha"] = ui.malha()
+        # malha grande deixa o Revo lento/sem responder ao dialogo de exportacao na mesma sessao: reabre antes de exportar
+        ui.fechar()
+        ui = R.RevoUI.abrir()
+        ui.abrir_scan(guid, pasta)
     r["arquivos"] = ui.exportar(os.path.join(args.saida, guid))
     r["segundos"] = round(time.time() - t0, 1)
     diverge = []
+    if r["fusao"] is None:
+        r["divergencias"] = diverge
+        return r
     if args.ponto is not None and abs(r["fusao"]["ponto_mm"] - args.ponto) > 0.005:
         diverge.append(f"ponto {r['fusao']['ponto_mm']} != {args.ponto}")
     if r["malha"]["modo"] != R.MALHA_MODO[args.malha]:
@@ -61,6 +71,7 @@ def main():
     ap.add_argument("--scans", help="guids separados por virgula (padrao: todos do projeto)")
     ap.add_argument("--reusar", action="store_true",
                     help="nao importa: usa a copia mais recente de cada scan na biblioteca (retomar apos falha)")
+    ap.add_argument("--so-exportar", action="store_true", help="nao funde nem gera malha: exporta o que ja existe no scan (com --reusar)")
     ap.add_argument("--fechar", action="store_true", help="fecha o Revo no fim")
     args = ap.parse_args()
 

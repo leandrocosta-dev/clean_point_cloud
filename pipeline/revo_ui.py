@@ -436,9 +436,10 @@ class RevoUI:
         os.makedirs(pasta, exist_ok=True)
         antes = set(os.listdir(pasta))
         send_keys("{ESC}")                                     # painel de malha/fusao pode ter ficado aberto
-        time.sleep(1)
+        self._esperar(lambda: not self._travado(self.pid), 300, 2.0, "Revo nao voltou a responder")   # malha grande: a tela demora
+        time.sleep(2)
         self._botao("Export Model").click_input()
-        self._esperar(lambda: self._botao("Confirm"), 10, 0.3, "dialogo de exportacao nao abriu")
+        self._esperar(lambda: self._botao("Confirm"), 90, 0.5, "dialogo de exportacao nao abriu")
         time.sleep(0.5)
         melhor = {}
         for d in self.principal.descendants(control_type="ListItem"):

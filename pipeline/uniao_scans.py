@@ -194,6 +194,8 @@ def unir(proj, gA, gB, T, saida, nome_scan):
     rv = os.path.join(pasta, "property.rvproj")
     meta = json.load(open(rv, encoding="utf-8"))
     meta["guid"] = nome_scan
+    meta["can_fuse_optimize"] = False          # o Revo reotimizaria as poses dos quadros e desfaria o alinhamento medido
+    meta.setdefault("scan_param", {})["scan_mode"] = 1   # scanMode 0 (geometria) liga isOptimize no Revo
     if "vf_count" in meta:
         meta["vf_count"] = n["rgbd"]
     json.dump(meta, open(rv, "w", encoding="utf-8"), indent=4)
@@ -304,6 +306,8 @@ def unir_varios(proj, poses, base, saida, nome_scan, excluir=()):
     rv = os.path.join(pasta, "property.rvproj")
     meta = json.load(open(rv, encoding="utf-8"))
     meta["guid"] = nome_scan
+    meta["can_fuse_optimize"] = False          # o Revo reotimizaria as poses dos quadros e desfaria o alinhamento medido
+    meta.setdefault("scan_param", {})["scan_mode"] = 1   # scanMode 0 (geometria) liga isOptimize no Revo
     if "vf_count" in meta:
         meta["vf_count"] = rgbd
     json.dump(meta, open(rv, "w", encoding="utf-8"), indent=4)

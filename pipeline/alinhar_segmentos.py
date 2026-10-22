@@ -47,7 +47,8 @@ def centroides(P, v, minimo=3):
 
 
 def _segmentos_scan(args):
-    proj, g, destino, quadros, voxel = args
+    proj, g, destino, quadros, voxel = args[:5]
+    faixas = args[5] if len(args) > 5 else None        # [{seg,k0,k1}] explicitas (apos apagar quadros)
     out = []
     with tempfile.TemporaryDirectory() as tmp:
         s = RevoScan(os.path.join(proj, "data", g), tmp)
@@ -55,22 +56,30 @@ def _segmentos_scan(args):
             for m in sorted(set(int(x) for x, p in zip(s.modo, s.tem_prof) if p)):
                 s.K[m], _ = s.calibrar(m)
             ks = [k for k in range(len(s.ids)) if s.tem_prof[k]]
-            nseg = max(1, int(round(len(ks) / quadros)))
-            grupos = np.array_split(np.array(ks), nseg)
+            if faixas:
+                grupos = [np.array([k for k in range(f["k0"], f["k1"] + 1) if k < len(s.ids) and s.tem_prof[k]]) for f in faixas]
+            else:
+                nseg = max(1, int(round(len(ks) / quadros)))
+                grupos = np.array_split(np.array(ks), nseg)
             for n, gk in enumerate(grupos):
-                k0 = 0 if n == 0 else int(gk[0])
-                k1 = len(s.ids) - 1 if n + 1 == len(grupos) else int(grupos[n + 1][0]) - 1
+                if faixas:
+                    k0, k1 = faixas[n]["k0"], faixas[n]["k1"]
+                    if len(gk) == 0:
+                        continue
+                else:
+                    k0 = 0 if n == 0 else int(gk[0])
+                    k1 = len(s.ids) - 1 if n + 1 == len(grupos) else int(grupos[n + 1][0]) - 1
                 P = np.vstack([s.pontos(int(k), passo=1)[0] for k in gk])      # densidade total
                 C = centroides(P, voxel)
                 arq = os.path.join(destino, f"{g}_{n:03d}.npy")
                 np.save(arq, C.astype(np.float32))
-                out.append(dict(scan=g, seg=n, k0=k0, k1=k1, arquivo=arq, n=len(C), n_brutos=len(P)))
+                out.append(dict(scan=g, seg=(faixas[n]["seg"] if faixas else n), k0=k0, k1=k1, arquivo=arq, n=len(C), n_brutos=len(P)))
         finally:
             s.c.close()
     return g, out
 
 
-def segmentos(proj, scans, work, quadros=50, voxel=1.0, jobs=4):
+def segmentos(proj, scans, work, quadros=50, voxel=1.0, jobs=4, faixas=None):
     d = os.path.join(work, "segmentos")
     os.makedirs(d, exist_ok=True)
     cache = os.path.join(work, "segmentos_indice.json")
@@ -80,7 +89,7 @@ def segmentos(proj, scans, work, quadros=50, voxel=1.0, jobs=4):
     os.environ.setdefault("REVO_THREADS", "4")
     por_scan = {}
     with ProcessPoolExecutor(jobs, initializer=baixa_prioridade) as ex:
-        for g, out in ex.map(_segmentos_scan, [(proj, g, d, quadros, voxel) for g in scans]):
+        for g, out in ex.map(_segmentos_scan, [(proj, g, d, quadros, voxel, (faixas or {}).get(g)) for g in scans]):
             por_scan[g] = out
             print(f"  {g}: {len(out)} segmentos ({sum(x['n'] for x in out):,} centroides de {sum(x['n_brutos'] for x in out):,} pontos)", flush=True)
     json.dump(por_scan, open(cache, "w"), indent=1)
