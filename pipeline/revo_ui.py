@@ -155,6 +155,7 @@ def parametros(guid, ponto_mm=None, malha=None, otimizar=None, grade_mm=None, fu
         t["enableClearMarker"] = bool(marcadores)
     if isolados is not None:
         t["enableExtractIsolation"] = bool(isolados)
+        t["enableEraseIsolatedPoint"] = bool(isolados)     # os dois: com so um deles o interruptor do painel continua ligado
     with open(p, "w", encoding="utf-8") as f:
         json.dump(d, f, indent=4, ensure_ascii=False)
     return p
@@ -341,7 +342,7 @@ class RevoUI:
         time.sleep(3)                      # o Revo ainda grava miniatura/indice depois de criar a pasta
         return novos()
 
-    def abrir_scan(self, nome, pasta=None, timeout=60):
+    def abrir_scan(self, nome, pasta=None, timeout=1200):
         """Filtra a biblioteca pelo nome (caixa de busca) e abre o primeiro cartao (duplo clique).
         Os cartoes sao desenhados sem texto na arvore UIA, entao a busca e o caminho confiavel.
         Com `pasta` (a que `carregar_projeto` devolveu), confere pelo log do Revo que foi essa que abriu."""

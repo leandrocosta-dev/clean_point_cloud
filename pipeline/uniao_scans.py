@@ -221,8 +221,10 @@ def _T_do_quadro(pg, k):
     return np.array(pg)
 
 
-def unir_varios(proj, poses, base, saida, nome_scan, excluir=()):
-    """Como `unir`, para N scans: `poses` = {guid: 4x4 que leva o scan ao referencial comum}. O scan `base` e
+def unir_varios(proj, poses, base, saida, nome_scan, excluir=(), copias=None):
+    """`copias` {guid: n}: repete n vezes cada quadro desses scans (mesma pose e dados). O Revo so mantem pontos vistos
+    por >= 3 quadros (minFrameCount); passadas curtas, em que cada ponto aparece em 1-2 quadros, viram buraco.
+    Como `unir`, para N scans: `poses` = {guid: 4x4 que leva o scan ao referencial comum}. O scan `base` e
     copiado e tem TODAS as poses multiplicadas pela sua propria transformacao (ela pode nao ser a identidade);
     os demais sao anexados com os ids deslocados. Devolve a contagem de quadros por scan."""
     from revo_projeto import ler_ply, gravar_ply
@@ -256,6 +258,10 @@ def unir_varios(proj, poses, base, saida, nome_scan, excluir=()):
                 continue
             cn.execute("update FrameInfo set bin=? where id=?", (_bin_com_pose(b, Tk), id_))
             contagem[base] += 1
+            for c_ in range(1, (copias or {}).get(base, 1)):
+                novo_id = id_ + c_ * 100_000_000
+                cn.execute("insert into FrameRGBD select ?, version, type, width, height, data, weights from FrameRGBD where id=?", (novo_id, id_))
+                cn.execute("insert into FrameInfo select ?, version, seqId, droped, gapRGB, pose, optimized, markerCount, markerData, bin from FrameInfo where id=?", (novo_id, id_))
         proximo = cn.execute("select max(id) from FrameInfo").fetchone()[0] + 2
         for g in outros:
             src = os.path.join(proj, "data", g, "cache", "frames.dataset")
@@ -277,6 +283,10 @@ def unir_varios(proj, poses, base, saida, nome_scan, excluir=()):
                 cn.execute("insert into FrameInfo values (?,?,?,?,?,?,?,?,?,?)",
                            (id_ + off, ver, seq, drop, gap, pose, opt, mk, mkd, _bin_com_pose(b, Tk)))
                 contagem[g] = contagem.get(g, 0) + 1
+                for c_ in range(1, (copias or {}).get(g, 1)):
+                    novo_id = id_ + off + c_ * 100_000_000
+                    cn.execute("insert into FrameRGBD select ?, version, type, width, height, data, weights from FrameRGBD where id=?", (novo_id, id_ + off))
+                    cn.execute("insert into FrameInfo select ?, version, seqId, droped, gapRGB, pose, optimized, markerCount, markerData, bin from FrameInfo where id=?", (novo_id, id_ + off))
             proximo = cn.execute("select max(id) from FrameInfo").fetchone()[0] + 2
             cn.commit()
             cn.execute("detach b")
