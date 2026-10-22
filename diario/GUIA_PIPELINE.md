@@ -119,3 +119,4 @@ Instabilidade sob carga sustentada em todos os nucleos: segfaults aleatorios do 
 - Scans do pára-choque de OUTRO DIA existem: `D:\Projects\Project20260920_150020` (20260920_153720 cobre a face externa; 82% a < 3 mm do modelo; 153912 tambem) e
   `Project20260920_143823/20260920_145309`. Nao foram incorporados (os 20 scans ja cobrem quase todos os furos). `20260922_083006` e um teste RGB do usuario: ignorar.
 - Varredura de todos os scans de D:\Projects (extensao por scan): `Desktop\_varredura_scans.csv`.
+- v8: v7 + `o3d.t.geometry.TriangleMesh.fill_holes(hole_size=16)` (so liga vertices de borda existentes, +~1000 triangulos): furos 146 -> 41. Dos 146 da v7: 118 tinham dado de >=3 scans, 14 de 1-2, 14 sem dado nos 20 scans.
