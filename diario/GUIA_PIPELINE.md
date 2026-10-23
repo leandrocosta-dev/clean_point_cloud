@@ -234,3 +234,10 @@ Instabilidade sob carga sustentada em todos os nucleos: segfaults aleatorios do 
 3. Uniao: concatenar (2 cascas), garantir 0 colisoes com `findCollidingTriangleBitsets`; conferir tambem a distribuicao de distancia por terco da peca.
 4. O usuario e o juiz: abre as versoes lado a lado no MeshInspector; capturar tela so quando ele avisar; azul = frente, amarelo = verso/atravessando.
 5. Perguntar a ele (ou procurar nos dados) se existe um scan de referencia que resolva a incerteza fisica (a ponte existia e ele lembrou).
+
+## Interna: corrigir posicao LOCAL em vez de cortar (cobertura 65% -> 84-87%)
+- Feedback do usuario (uniao no MeshInspector): externa BOA; interna com falhas (manchas amarelas na interna vista por dentro = buracos onde se ve o verso da externa; flancos/extremidades).
+- Diagnostico: a interna BRUTA cobre 95% da externa; `sem_atravessar.py` cortava 30% (extremos A 50% e B 65%) porque ali a interna estava 2-5 mm FORA da externa (desalinhamento de grande escala). Cortar = jogar dado bom fora.
+- Solucao: `pipeline/corrigir_interna_local.py --espessura 2.0` (3 passadas, raios 25, 10, 5 mm): delta = -(s + 2,0) nos vertices de pele, suavizado por mediana num raio e aplicado ao longo da normal externa; relevo de alta frequencia (nervuras/fixacoes) preservado. Depois `sem_atravessar.py --folga 0 --aneis 1` -> 0 colisoes. Cobertura da externa pela interna (<6 mm): 64,8% -> 86,8% (84,3% apos decimar a 1,15 M). Premissa: espessura quase constante (usuario) = 2,0 mm mediana da ponte.
+- Comando completo da interna: ponte -> construcao_por_cobertura --so-internos (cache) -> dedupe -> malha_meshlib (min-faces 1500, furo-max 25) -> corrigir_interna_local x3 (25/10/5) -> sem_atravessar -> decimar 1,2 M -> sem_atravessar de novo.
+- Restos: ~6.500 furos pequenos (bordas do corte) e extremo A ~67% de cobertura; espessura 2,0 mm nominal (ponte), nao medida ponto a ponto.
