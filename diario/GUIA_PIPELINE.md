@@ -227,3 +227,10 @@ Instabilidade sob carga sustentada em todos os nucleos: segfaults aleatorios do 
 - Espessura medida na ponte (ao longo da normal de cada face interna ate a pele externa a <0,8 mm): 1,5-3,0 mm, mediana 2,0 mm. Depois de montar e cortar atravessamentos: s mediano da interna em relacao a externa = -2,0 mm (IQR -3,05..-0,98).
 - Corte final: `sem_atravessar.py --folga 0.0 --aneis 1`; 0 colisoes. Cobertura da externa pela interna a <6 mm: ~66%.
 - Comandos: ponte -> `construcao_por_cobertura.py ... --saida _onix_int3 --so-internos --tol-limpa 40 --cob-tol 4 --extras ...` (usa o cache) -> Open3D dedupe -> `malha_meshlib.py --min-faces 1500 --furo-max 25` -> `sem_atravessar.py`.
+
+## LICOES-CHAVE desta etapa (resumo para nao redescobrir)
+1. Face externa: so scans EXTERNOS + construcao por cobertura (v14); furinhos fechados com dado medido dentro (v19) e borda lisa <=150 mm (v20, aprovada). Nao fechar aberturas grandes (v15).
+2. Face interna: alinhar por scan-PONTE, nunca por ICP contra a externa; nao assumir espessura; medir na ponte pela normal da face interna ate a pele externa.
+3. Uniao: concatenar (2 cascas), garantir 0 colisoes com `findCollidingTriangleBitsets`; conferir tambem a distribuicao de distancia por terco da peca.
+4. O usuario e o juiz: abre as versoes lado a lado no MeshInspector; capturar tela so quando ele avisar; azul = frente, amarelo = verso/atravessando.
+5. Perguntar a ele (ou procurar nos dados) se existe um scan de referencia que resolva a incerteza fisica (a ponte existia e ele lembrou).
