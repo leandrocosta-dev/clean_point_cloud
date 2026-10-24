@@ -280,3 +280,4 @@ Instabilidade sob carga sustentada em todos os nucleos: segfaults aleatorios do 
 
 ## Tampa com scan-ponte (licao)
 - Scan de dois lados (20261024_190233) = BASE; os scans 1024_3 e 1024_2 fecham o que falta (feito pelo usuario na mao). Fazer assim: alinhar scans de uma face ao ponte (PCA + ICP com as faces de mesmo lado), manter o ponte e acrescentar so as lacunas. Nao usar a malha de uma face como base. A fuse.ply do ponte e filtrada e perde verso: os quadros brutos (RevoScan.pontos) cobrem mais.
+- Tampa: o scan 1024_02 e o VERSO (normais opostas as do 03); as entregas antigas o alinharam como mesma face e colapsaram a espessura (~1,2 mm). Correcao: realinhar 02 contra o verso do 0233 (ICP ponto-a-plano so com a face de mesmo lado). Resultado em `Desktop\Tampa_COMPLETA`: verso completo, 1,93 M tri, 1 componente.
