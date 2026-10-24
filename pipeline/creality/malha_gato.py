@@ -1,5 +1,5 @@
 import open3d as o3d, numpy as np, os, sys, json
-sys.path.insert(0,r"C:\Users\pc\Desktop\_ob_re")
+sys.path.insert(0,os.path.dirname(os.path.abspath(__file__)))
 from limpa_nuvem import *
 out=r"C:\Users\pc\Desktop\Gatinho_ENTREGA"
 p=carregar("pc_before.ply"); n,d,s=objeto(p)
