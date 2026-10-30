@@ -148,7 +148,7 @@ def unir(proj, gA, gB, T, saida, nome_scan):
     """Grava `saida` (projeto .revo com um scan `nome_scan`) com os quadros de A e os de B levados por T."""
     from revo_projeto import ler_ply, gravar_ply
     saida = os.path.abspath(saida)
-    if os.path.exists(saida):
+    if os.path.exists(saida) and (not os.path.isdir(saida) or os.listdir(saida)):   # pasta vazia pode ser reaproveitada
         sys.exit(f"destino ja existe: {saida}")
     pasta = os.path.join(saida, "data", nome_scan)
     shutil.copytree(os.path.join(proj, "data", gA), pasta)
@@ -229,7 +229,7 @@ def unir_varios(proj, poses, base, saida, nome_scan, excluir=(), copias=None):
     os demais sao anexados com os ids deslocados. Devolve a contagem de quadros por scan."""
     from revo_projeto import ler_ply, gravar_ply
     saida = os.path.abspath(saida)
-    if os.path.exists(saida):
+    if os.path.exists(saida) and (not os.path.isdir(saida) or os.listdir(saida)):   # pasta vazia pode ser reaproveitada
         sys.exit(f"destino ja existe: {saida}")
     pasta = os.path.join(saida, "data", nome_scan)
     shutil.copytree(os.path.join(proj, "data", base), pasta)

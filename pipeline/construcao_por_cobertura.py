@@ -73,7 +73,7 @@ def main():
     if a.espessura:
         En0 = np.asarray(E.normals).copy(); E.points = o3d.utility.Vector3dVector(np.asarray(E.points) - a.espessura * En0); E.normals = o3d.utility.Vector3dVector(En0)
     E.estimate_normals(o3d.geometry.KDTreeSearchParamHybrid(radius=4, max_nn=30))
-    Ep = np.asarray(E.points); rng = np.random.default_rng(0); Ea = Ep[rng.choice(len(Ep), 1_500_000, replace=False)]   # amostra para cobertura
+    Ep = np.asarray(E.points); rng = np.random.default_rng(0); Ea = Ep[rng.choice(len(Ep), min(len(Ep), 1_500_000), replace=False)]   # amostra para cobertura
     tE = cKDTree(Ep); En = np.asarray(E.normals)
     # 1. alinhar e aparar cada scan
     meshes, cobs = {}, {}

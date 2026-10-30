@@ -309,7 +309,9 @@ class RevoUI:
         self.biblioteca()
         next(d for d in self.principal.descendants(control_type="Edit") if d.is_visible()).set_edit_text("")  # filtro antigo
         dados = os.path.join(os.path.dirname(os.path.abspath(revo)), "data")
-        esperados = sum(os.path.isdir(os.path.join(dados, d)) for d in os.listdir(dados))
+        # a pasta de marcadores (no type 5, ex.: Frame...) nao vira scan na biblioteca: nao conta
+        nos = json.load(open(os.path.abspath(revo), encoding="utf-8")).get("nodes", [])
+        esperados = sum(1 for n in nos if n.get("type") != 5 and os.path.isdir(os.path.join(dados, n["guid"])))
         pastas = set(os.listdir(BIBLIOTECA))
         self._limpar_dialogos("Load Project")
         next(d for d in self.principal.descendants() if d.window_text() == "Load Project").click_input()

@@ -19,9 +19,14 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import revo_ui as R
 
 
+ENTREGAVEIS = {"nuvem+malha": ("nuvem", "malha"), "nuvem": ("nuvem",), "malha": ("malha",)}
+PREFIXO = {"nuvem": "Fused", "malha": "Mesh"}
+
+
 def guids_do_projeto(revo):
     dados = os.path.join(os.path.dirname(os.path.abspath(revo)), "data")
-    return sorted(d for d in os.listdir(dados) if os.path.isdir(os.path.join(dados, d)))
+    marcadores = {n["guid"] for n in json.load(open(os.path.abspath(revo), encoding="utf-8")).get("nodes", []) if n.get("type") == 5}
+    return sorted(d for d in os.listdir(dados) if os.path.isdir(os.path.join(dados, d)) and d not in marcadores)
 
 
 def processar(ui, guid, pasta, args):
@@ -32,12 +37,13 @@ def processar(ui, guid, pasta, args):
         r["fusao"] = r["malha"] = None                 # usa o que ja esta no scan (maior contador de nome)
     else:
         r["fusao"] = ui.fundir()
-        r["malha"] = ui.malha()
+        r["malha"] = ui.malha() if "malha" in ENTREGAVEIS[args.entregaveis] else None
         # malha grande deixa o Revo lento/sem responder ao dialogo de exportacao na mesma sessao: reabre antes de exportar
         ui.fechar()
         ui = R.RevoUI.abrir()
         ui.abrir_scan(guid, pasta)
-    r["arquivos"] = ui.exportar(os.path.join(args.saida, guid))
+    prefixos = tuple(PREFIXO[e] for e in ENTREGAVEIS[getattr(args, "entregaveis", "nuvem+malha")])
+    r["arquivos"] = ui.exportar(os.path.join(args.saida, guid), prefixos=prefixos)
     r["segundos"] = round(time.time() - t0, 1)
     diverge = []
     if r["fusao"] is None:
@@ -45,6 +51,9 @@ def processar(ui, guid, pasta, args):
         return r
     if args.ponto is not None and abs(r["fusao"]["ponto_mm"] - args.ponto) > 0.005:
         diverge.append(f"ponto {r['fusao']['ponto_mm']} != {args.ponto}")
+    if r["malha"] is None:                              # so a nuvem foi pedida
+        r["divergencias"] = diverge
+        return r
     if r["malha"]["modo"] != R.MALHA_MODO[args.malha]:
         diverge.append(f"modo da malha {r['malha']['modo']}")
     if args.malha == "rapida" and r["malha"]["otimizar"] != R.OTIMIZAR[args.otimizar]:
@@ -68,6 +77,8 @@ def main():
     ap.add_argument("--furos", action="store_true", help="Hole Filling")
     ap.add_argument("--marcadores", action="store_true", help="Remove marker points")
     ap.add_argument("--manter-isolados", action="store_true", help="desliga Remove Isolation")
+    ap.add_argument("--entregaveis", choices=list(ENTREGAVEIS), default="nuvem+malha",
+                    help="o que exportar por scan; so 'nuvem' nao gera a malha (mais rapido)")
     ap.add_argument("--scans", help="guids separados por virgula (padrao: todos do projeto)")
     ap.add_argument("--reusar", action="store_true",
                     help="nao importa: usa a copia mais recente de cada scan na biblioteca (retomar apos falha)")

@@ -17,3 +17,6 @@ __pycache__/
 
 # Cache de amostras dos scans (grande, regeneravel)
 aprendizado/cache/
+
+# Estado local da GUI (contexto, fila, historico, presets)
+gui/estado/

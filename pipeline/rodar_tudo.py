@@ -21,7 +21,7 @@ AQUI = os.path.dirname(os.path.abspath(__file__))
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("projeto")
-    ap.add_argument("--saida-ply", required=True)
+    ap.add_argument("--saida-ply", help="obrigatorio, exceto com --so-limpar")
     ap.add_argument("--saida-limpo")
     ap.add_argument("--periferia-mm", type=float, default=0.0)
     ap.add_argument("--periferia-banda", type=float, default=2.5)
@@ -35,11 +35,16 @@ def main():
     ap.add_argument("--malha", choices=("rapida", "alta"), default="rapida")
     ap.add_argument("--otimizar", choices=("nenhum", "baixo", "alto"), default="baixo")
     ap.add_argument("--grade", type=float)
+    ap.add_argument("--so-limpar", action="store_true",
+                    help="para depois da limpeza (e da uniao, se houver): entrega so o .revo limpo, sem abrir o Revo Scan")
+    ap.add_argument("--entregaveis", choices=("nuvem+malha", "nuvem", "malha"), default="nuvem+malha")
     ap.add_argument("--furos", action="store_true")
     ap.add_argument("--marcadores", action="store_true")
     ap.add_argument("--manter-isolados", action="store_true")
     a = ap.parse_args()
 
+    if not a.so_limpar and not a.saida_ply:
+        ap.error("--saida-ply e obrigatorio (ou use --so-limpar)")
     proj = os.path.abspath(a.projeto)
     revo = [f for f in os.listdir(proj) if f.endswith(".revo")][0]
     saida = os.path.abspath(a.saida_limpo or os.path.join(os.path.dirname(proj), os.path.splitext(revo)[0] + "_limpo"))
@@ -68,8 +73,12 @@ def main():
         novo = os.path.join(saida, os.path.splitext(revo)[0] + "_limpo.revo")
         if not os.path.exists(novo):
             novo = os.path.join(saida, [f for f in os.listdir(saida) if f.endswith(".revo")][0])
+    if a.so_limpar:
+        print(f"== concluido sem Revo. Projeto .revo limpo: {novo}", flush=True)
+        sys.exit(0)
     c2 = [sys.executable, os.path.join(AQUI, "revo_pipeline.py"), novo, "--saida", os.path.abspath(a.saida_ply),
-          "--malha", a.malha, "--otimizar", a.otimizar]
+          "--malha", a.malha, "--otimizar", a.otimizar,
+          "--entregaveis", a.entregaveis]
     for flag, v in (("--ponto", a.ponto), ("--grade", a.grade)):
         if v is not None:
             c2 += [flag, str(v)]

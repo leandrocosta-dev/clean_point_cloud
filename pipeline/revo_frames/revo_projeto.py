@@ -275,7 +275,7 @@ def segmentar_peca(scan, voxel=1.0, faixa_base=1.2, passo=6, log=print,
                    min_votos_frac=0.5, min_tam_frac=0.05, ext_min_mm=15.0, colado_mm=5.0,
                    margem_mm=4.0, transitorio=True, trans_min_free=3, trans_razao=1.0,
                    trans_viz=5, trans_dens=0.6, amostra=None, modo_base="sem", cruza_max=0.10,
-                   selecao="hibrido", dominancia=0.5, periferia_mm=0.0, per_altura=15.0, per_banda=2.5, per_abertura=6.0, per_alargue=20.0, grandes_frac=0.02, per_corpo_frac=0.10):
+                   selecao="hibrido", dominancia=0.5, periferia_mm=0.0, per_altura=15.0, per_banda=2.5, per_abertura=6.0, per_alargue=20.0, grandes_frac=0.02, per_corpo_frac=0.10, ext_max_mm=0.0, so_peca=False):
     """Separa a peca do prato e das pecas de apoio.
 
     1. Funde uma amostra de todos os quadros no referencial do mundo.
@@ -350,6 +350,14 @@ def segmentar_peca(scan, voxel=1.0, faixa_base=1.2, passo=6, log=print,
     grade[tuple(idx.T)] = True
     rot, ncomp = ndimage.label(grade, structure=np.ones((3, 3, 3)))
     tam = np.bincount(rot[tuple(idx.T)], minlength=ncomp + 1)
+    if ext_max_mm > 0:
+        # gabarito/placa de marcadores maior que a peca: sai da disputa (nunca e peca nem parte dela)
+        grande = [c for c, sl in enumerate(ndimage.find_objects(rot), start=1)
+                  if sl is not None and max(x.stop - x.start for x in sl) * voxel > ext_max_mm]
+        if grande:
+            log(f"   ext-max-mm {ext_max_mm:g}: {len(grande)} componente(s) maiores ignorados {grande[:8]}")
+        tam[grande] = 0
+        rot[np.isin(rot, grande)] = 0
 
     # mira da camera -> componente
     occ = np.argwhere(rot > 0)
@@ -379,11 +387,15 @@ def segmentar_peca(scan, voxel=1.0, faixa_base=1.2, passo=6, log=print,
     # A peca pode se partir em varias componentes (miolo separado do anel por uma fresta
     # estreita). Mantem toda componente grande e bem mirada, nao so a mais votada.
     # Marcadores e apoios pequenos tem ~0 votos e ficam de fora.
+    if so_peca:
+        ext_min_mm = 1e9                          # nada "colado" entra: so o componente escolhido
     partes = [c for c in range(1, ncomp + 1)
               if c == peca or (votos[c] >= min_votos_frac * votos[peca] and tam[c] >= min_tam_frac * tam[peca])
               # a peca costuma aparecer partida em varios componentes grandes (amostra esparsa, fendas):
               # todo componente grande em relacao ao maior tambem entra, com ou sem voto de mira
               or (grandes_frac > 0 and tam[c] >= grandes_frac * tam[maior])]
+    if so_peca:
+        partes = [peca]
     # Componente grande colado na peca (ex.: cubo central separado por uma fresta) tambem e peca,
     # mesmo sem voto de mira. Marcadores sao pequenos (~6 mm) e ficam de fora.
     # Em cena suja (braco, blocos encostados) so entra o que esta DENTRO da caixa da peca, como o
@@ -705,7 +717,8 @@ def mascara_ilhas(P, ilh):
 PLY_ANTIGOS = ("fuse.ply", "fuse_mesh.ply", "mark.ply")
 
 
-def limpar_scan(scan, seg, destino_scan, log=print, pixels=True, ilhas=True, min_mantido=0.0, sem_ply_antigos=False):
+def limpar_scan(scan, seg, destino_scan, log=print, pixels=True, ilhas=True, min_mantido=0.0, sem_ply_antigos=False,
+                zerar_vazios=False, min_pix_quadro=1):
     """Grava a copia do scan com os pixels fora da peca apagados em cada quadro.
 
     Alem da mascara da peca (`mascara_manter`): `pixels` tira pixels voadores e manchas 2D
@@ -781,9 +794,12 @@ def limpar_scan(scan, seg, destino_scan, log=print, pixels=True, ilhas=True, min
         if ilh is not None:
             ok = ok & mascara_ilhas(P, ilh)
         tot_antes += len(pix)
-        if ok.sum() == 0:
-            vazios.append(k)       # quadro so com prato/apoio: mantem o original
-            tot_depois += len(pix)
+        if ok.sum() < min_pix_quadro:
+            vazios.append(k)       # quadro so com prato/apoio
+            if zerar_vazios:       # remove a profundidade do quadro (estado que o Revo ja usa em quadros sem profundidade)
+                cn.execute("delete from FrameRGBD where id=?", (i,))
+            else:                  # padrao: mantem o original
+                tot_depois += len(pix)
             continue
         nova = np.zeros(w * h, bool)
         nova[pix[ok]] = True
@@ -814,7 +830,7 @@ def limpar_scan(scan, seg, destino_scan, log=print, pixels=True, ilhas=True, min
     log(f"   pontos dos quadros: {tot_antes:,} -> {tot_depois:,} ({tot_depois/max(1,tot_antes)*100:.0f}% mantidos; "
         f"peca {n_mask:,} -> pixels voadores {n_mask-n_pix:,} tirados) | preview {len(prev):,} -> {okp.sum():,} | integridade: {integ}")
     if vazios:
-        log(f"   AVISO: {len(vazios)} quadros sem nenhum ponto da peca foram mantidos como estavam")
+        log(f"   AVISO: {len(vazios)} quadros sem ponto da peca " + ("tiveram a profundidade removida" if zerar_vazios else "foram mantidos como estavam"))
     return dict(antes=tot_antes, depois=tot_depois, vazios=len(vazios), integridade=integ,
                 voadores=n_mask - n_pix, ilhas_removidas=ilh["n_removidas"] if ilh else 0)
 

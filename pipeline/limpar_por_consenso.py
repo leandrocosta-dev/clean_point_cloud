@@ -178,7 +178,7 @@ def main():
     a = ap.parse_args()
     baixa_prioridade()
     proj, saida = os.path.abspath(a.projeto), os.path.abspath(a.saida)
-    if os.path.exists(saida):
+    if os.path.exists(saida) and (not os.path.isdir(saida) or os.listdir(saida)):   # pasta vazia pode ser reaproveitada
         sys.exit(f"destino ja existe: {saida}")
     pj = json.load(open(a.segmentos))
     scans = sorted(g for g in json.load(open(os.path.join(a.pasta_segmentos, "segmentos_indice.json"))) if g in pj["segmentos"])

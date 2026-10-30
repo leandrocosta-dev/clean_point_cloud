@@ -34,7 +34,7 @@ def copiar_intacto(proj, saida, s):
     shutil.copytree(os.path.join(proj, "data", s), os.path.join(saida, "data", s))
 
 
-def processar(proj, s, saida, pixels=True, ilhas=True, periferia_mm=0.0, per_banda=2.5, per_alargue=20.0, sem_ply_antigos=False):
+def processar(proj, s, saida, pixels=True, ilhas=True, periferia_mm=0.0, per_banda=2.5, per_alargue=20.0, sem_ply_antigos=False, ext_max_mm=0.0, min_mantido=MIN_MANTIDO, so_peca=False):
     """Limpa um scan (roda num processo proprio). Devolve (id, relatorio, log).
 
     Qualquer scan que nao possa ser limpo com seguranca (sem raw_preview, calibracao ruim, limpeza
@@ -66,10 +66,10 @@ def processar(proj, s, saida, pixels=True, ilhas=True, periferia_mm=0.0, per_ban
                 if max(erros.values()) > ERRO_MAX_CALIB and max(erros.values()) / esp > ERRO_REL_MAX:
                     log.append(f"   PULADO: erro {max(erros.values()):.2f} mm = {max(erros.values())/esp:.2f} x espacamento do preview; copiado sem alteracao")
                     return s, dict(status="pulado", erros=erros), _fechar(scan, proj, saida, s, log)
-                seg = segmentar_peca(scan, periferia_mm=periferia_mm, per_banda=per_banda, per_alargue=per_alargue, log=lambda *a: log.append(" ".join(map(str, a))))
+                seg = segmentar_peca(scan, periferia_mm=periferia_mm, per_banda=per_banda, per_alargue=per_alargue, ext_max_mm=ext_max_mm, so_peca=so_peca, log=lambda *a: log.append(" ".join(map(str, a))))
                 seg = adicionar_referencia_fuse(scan, seg, log=lambda *a: log.append(" ".join(map(str, a))))
                 r = limpar_scan(scan, seg, os.path.join(saida, "data", s), log=lambda *a: log.append(" ".join(map(str, a))),
-                                pixels=pixels, ilhas=ilhas, min_mantido=MIN_MANTIDO, sem_ply_antigos=sem_ply_antigos)
+                                pixels=pixels, ilhas=ilhas, min_mantido=min_mantido, sem_ply_antigos=sem_ply_antigos)
                 if r.get("revisar"):
                     return s, dict(status="revisar", erros=erros, **r), _fechar(scan, proj, saida, s, log, copiar=False)
                 render_comparacao(scan, seg, os.path.join(saida, f"{s}_antes_depois.png"))
@@ -102,13 +102,16 @@ def main():
     ap.add_argument("--periferia-banda", type=float, default=2.5, help="espessura (mm) da faixa do plano removida")
     ap.add_argument("--periferia-alargue", type=float, default=20.0, help="mm do corpo ate onde o relevo baixo ainda conta como peca (bases alargadas)")
     ap.add_argument("--sem-ply-antigos", action="store_true", help="nao copia fuse.ply/fuse_mesh.ply/mark.ply originais (trazem a mesa); o Revo refaz a fusao")
+    ap.add_argument("--ext-max-mm", type=float, default=0.0, help="componentes com extensao maior que X mm (placa de marcadores/gabarito) nunca sao a peca; 0 = desligado")
+    ap.add_argument("--min-mantido", type=float, default=MIN_MANTIDO, help="fracao minima de pontos mantidos; abaixo disso o scan e copiado intacto (com --ext-max-mm a placa some e a fracao cai: baixe)")
+    ap.add_argument("--so-peca", action="store_true", help="mantem so o componente escolhido (sem os grandes/colados); para cena suja com a peca isolada")
     ap.add_argument("--jobs", type=int, default=0, help="scans em paralelo (0 = automatico)")
     a = ap.parse_args()
     proj = os.path.abspath(a.projeto)
     revo = [f for f in os.listdir(proj) if f.endswith(".revo")][0]
     nome = os.path.splitext(revo)[0] + "_limpo"
     saida = os.path.abspath(a.saida or os.path.join(os.path.dirname(proj), nome))
-    if os.path.exists(saida):
+    if os.path.exists(saida) and (not os.path.isdir(saida) or os.listdir(saida)):   # pasta vazia pode ser reaproveitada
         sys.exit(f"destino ja existe: {saida}")
     todos = [n["guid"] for n in json.load(open(os.path.join(proj, revo), encoding="utf-8"))["nodes"]]
     scans = a.scans or todos
@@ -122,7 +125,7 @@ def main():
         for s, r, log in ex.map(processar, [proj] * len(scans), scans, [saida] * len(scans),
                                     [not a.sem_pixels] * len(scans), [not a.sem_ilhas] * len(scans),
                                     [a.periferia_mm] * len(scans), [a.periferia_banda] * len(scans), [a.periferia_alargue] * len(scans),
-                                    [a.sem_ply_antigos] * len(scans)):
+                                    [a.sem_ply_antigos] * len(scans), [a.ext_max_mm] * len(scans), [a.min_mantido] * len(scans), [a.so_peca] * len(scans)):
             print("\n".join(log), flush=True)
             rel[s] = r
     for s in todos:   # scans fora de --scans vao sem alteracao
