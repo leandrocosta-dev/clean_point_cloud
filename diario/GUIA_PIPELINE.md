@@ -5,6 +5,7 @@ e, quando a peca foi escaneada em varios scans, uma peca COMPLETA, alinhada e li
 Historico detalhado, numeros e erros em `diario/DIARIO.md`; este guia e a receita e a lista do que NAO repetir.
 
 ## 0. Regras do usuario (nao quebrar)
+- NAO fechar furos por padrao (2026-11-02): nenhuma etapa fecha furos sozinha (Hole Filling do Revo = `--furos`, MeshLib = `malha_meshlib --furo-max N`, padrao 0). So aplicar se o usuario pedir.
 - Limpar no nivel dos FRAMES (`frames.dataset`), nunca em `.ply`; o Revo refunde dos quadros. Entregar `.revo` completo.
 - Nunca tocar no projeto original (D:\Projects\...): sempre copia em pasta nova (os scripts recusam destino existente).
 - Responder em portugues. Anotar aprendizados no diario do repo sem duplicar. Nao perguntar; checar e testar por conta.
@@ -298,3 +299,8 @@ Instabilidade sob carga sustentada em todos os nucleos: segfaults aleatorios do 
 - Armadilha scipy: `binary_dilation(iterations=0)` repete ate encher o volume (margem 0 manteve MAIS pontos). Tratar 0 a parte.
 - Scan 20261026_193448 (erro de calibracao 2,51 mm): o arco aparece em varreduras que se cruzam (X); limpeza nao corrige isso (e alinhamento). Nao validado abrindo no Revo Scan.
 - `rodar_tudo.py --so-limpar` entrega so o .revo limpo (sem Revo); `--entregaveis nuvem|malha|nuvem+malha` no revo_pipeline.
+
+## Projeto 6 (Project20261102_160823, 2026-11-02): chapa fina com ressalto, 3 scans + Merge_01
+- `limpar_raw` padrao (sem periferia) manteve 94-97%, mas deixou haste de marcadores colada e mao/pinca (scan 161841: 25 mm acima da chapa). O `fuse.ply` original so tem a chapa (+ressalto <= 12 mm).
+- Segunda passada: `pipeline/limpar_por_fuse.py <orig> <limpo> --saida NOVA --tol 3` apaga dos quadros o que fica a > 3 mm do fuse.ply (161841 -> 93,8%, 162050 -> 97,3%). So usar se o fuse.ply for confiavel (aqui: preview do usuario mostrava so a chapa).
+- Merge_01 (nuvem ja fundida pelo usuario, sem quadros) foi copiada sem alteracao: nao da pra limpar no nivel de quadros; refazer a fusao no Revo a partir dos scans limpos.

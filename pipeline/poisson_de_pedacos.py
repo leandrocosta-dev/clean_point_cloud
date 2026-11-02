@@ -25,5 +25,5 @@ R, dens = o3d.geometry.TriangleMesh.create_from_point_cloud_poisson(pc, depth=a.
 dens = np.asarray(dens); V = np.asarray(R.vertices); d, _ = cKDTree(P).query(V, workers=8)
 R.remove_vertices_by_mask((dens < np.quantile(dens, 0.005)) | (d > a.dist_max)); R.remove_degenerate_triangles(); R.remove_unreferenced_vertices()
 o3d.io.write_triangle_mesh(a.saida, R, write_vertex_normals=False)
-ml = mm.loadMesh(a.saida); print("MeshLib antes :", metricas(ml)); reparar(ml, min_faces=500, furo_max=6.0); print("MeshLib depois:", metricas(ml))
+ml = mm.loadMesh(a.saida); print("MeshLib antes :", metricas(ml)); reparar(ml, min_faces=500, furo_max=0.0); print("MeshLib depois:", metricas(ml))
 mm.saveMesh(ml, a.saida.replace(".ply", "_reparada.ply")); print(f"pronto ({time.time()-t0:.0f}s)")

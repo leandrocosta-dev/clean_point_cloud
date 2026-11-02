@@ -533,7 +533,7 @@ class PaginaScripts(QWidget):
 MODELOS_PIPELINE = {
     "Só limpar → entregar .revo limpo (sem Revo)": {"so_limpar": True, "periferia_mm": 5.0, "periferia_banda": 12.0, "periferia_alargue": 10.0},
     "Rápido (malha rápida, ponto automático)": {"malha": "rapida", "otimizar": "baixo"},
-    "Alta resolução 0,1 mm": {"ponto": 0.1, "malha": "alta", "grade": 0.1, "furos": True},
+    "Alta resolução 0,1 mm": {"ponto": 0.1, "malha": "alta", "grade": 0.1, "furos": False},
     "Resolução média 0,4 mm": {"ponto": 0.4, "malha": "alta", "grade": 0.4},
     "Remover mesa (receita validada 5/12/10)": {"periferia_mm": 5.0, "periferia_banda": 12.0, "periferia_alargue": 10.0},
     "Só nuvem (sem malha)": {"entregaveis": "nuvem"},

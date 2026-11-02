@@ -15,7 +15,7 @@ def receita_a(app):
     """Um scan: limpeza + Revo (fusao, malha, exportacao)."""
     return [_job(app, "A · Pipeline completo (1 scan)", "rodar_tudo.py", "{PROJETO}", "--saida-ply", "{SAIDA}\\{NOME}",
                  "--periferia-mm", 5, "--periferia-banda", 12, "--periferia-alargue", 10, "--ponto", 0.1, "--malha", "alta",
-                 "--grade", 0.1, "--furos")]
+                 "--grade", 0.1)]
 
 
 def receita_b(app):
@@ -24,7 +24,7 @@ def receita_b(app):
     if len(sc) < 2:
         raise ValueError("Selecione exatamente os 2 scans (partes A e B) na página Projeto.")
     return [_job(app, "B · Duas partes (uniao + Revo)", "rodar_tudo.py", "{PROJETO}", "--saida-ply", "{SAIDA}\\{NOME}",
-                 "--unir", sc[0], sc[1], "--lados", "opostos", "--ponto", 0.1, "--malha", "alta", "--grade", 0.1, "--furos")]
+                 "--unir", sc[0], sc[1], "--lados", "opostos", "--ponto", 0.1, "--malha", "alta", "--grade", 0.1)]
 
 
 def receita_c(app):
