@@ -159,7 +159,7 @@ def _limpar_scan(args):
             with open(db, "r+b") as f:
                 f.write(scan.sig)
             os.makedirs(os.path.join(destino, "data", g, "cache"), exist_ok=True)
-            shutil.move(db, os.path.join(destino, "data", g, "cache", "frames.dataset"))
+            shutil.copyfile(db, os.path.join(destino, "data", g, "cache", "frames.dataset"))
             stats["integridade"] = integ
         finally:
             scan.c.close()

@@ -41,6 +41,12 @@ def main():
     ap.add_argument("--furos", action="store_true")
     ap.add_argument("--marcadores", action="store_true")
     ap.add_argument("--manter-isolados", action="store_true")
+    ap.add_argument("--pixel-tol", type=float, default=1.0, help="limiar minimo dos pixels voadores em mm")
+    ap.add_argument("--pixel-comp-min", type=int, default=30, help="area minima de componente em pixels")
+    ap.add_argument("--pixel-adaptativo", action="store_true", help="filtro robusto adaptativo de pixels")
+    ap.add_argument("--modo-limpeza", choices=["precisao", "classico"], default="precisao", help="precisao protege detalhes com evidencia entre quadros")
+    ap.add_argument("--temporal-passo", type=int, default=8, help="separacao dos quadros de evidencia")
+    ap.add_argument("--temporal-min", type=int, choices=[2, 3, 4], default=2, help="quadros necessarios para confirmar descarte")
     a = ap.parse_args()
 
     if not a.so_limpar and not a.saida_ply:
@@ -52,6 +58,11 @@ def main():
     c1 = [sys.executable, os.path.join(AQUI, "limpar_raw.py"), proj, "--saida", saida, "--sem-ply-antigos",
           "--periferia-mm", str(a.periferia_mm), "--periferia-banda", str(a.periferia_banda),
           "--periferia-alargue", str(a.periferia_alargue), "--jobs", str(a.jobs)]
+    c1 += ["--pixel-tol", str(a.pixel_tol), "--pixel-comp-min", str(a.pixel_comp_min),
+           "--modo-limpeza", a.modo_limpeza, "--temporal-passo", str(a.temporal_passo),
+           "--temporal-min", str(a.temporal_min), "--manter-ids"]
+    if a.pixel_adaptativo:
+        c1.append("--pixel-adaptativo")
     if a.unir:
         c1 += ["--scans", *a.unir]
     elif a.scans:
@@ -73,6 +84,10 @@ def main():
         novo = os.path.join(saida, os.path.splitext(revo)[0] + "_limpo.revo")
         if not os.path.exists(novo):
             novo = os.path.join(saida, [f for f in os.listdir(saida) if f.endswith(".revo")][0])
+    # IDs originais so sao necessarios ate a uniao. A entrega sempre recebe IDs
+    # novos; as selecoes enviadas ao Revo precisam acompanhar o remapeamento.
+    from preparar_importacao import reidentificar
+    mapa = reidentificar(novo)
     if a.so_limpar:
         print(f"== concluido sem Revo. Projeto .revo limpo: {novo}", flush=True)
         sys.exit(0)
@@ -86,7 +101,7 @@ def main():
         if on:
             c2.append(flag)
     if a.scans and not a.unir:
-        c2 += ["--scans", ",".join(a.scans)]
+        c2 += ["--scans", ",".join(mapa.get(s, s) for s in a.scans)]
     print("== etapa 2: Revo Scan (fusao, malha, exportacao)", flush=True)
     sys.exit(subprocess.run(c2).returncode)
 

@@ -7,13 +7,14 @@ from introspect import ler_script
 RAIZ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PIPE = os.path.join(RAIZ, "pipeline")
 
-OCULTOS = {"revo_ui.py", "dph.py", "mundo_scan.py", "revo_projeto.py", "__init__.py"}
+OCULTOS = {"revo_ui.py", "dph.py", "mundo_scan.py", "revo_projeto.py", "precisao.py", "relatorio_qualidade.py", "__init__.py"}
 
 # arquivo (relativo a pipeline/) -> (categoria, titulo)
 CATEGORIAS = [
     ("Pipeline Revo", {
         "rodar_tudo.py": "Pipeline completo (limpa, une, funde, exporta)",
         "limpar_raw.py": "Limpar frames (frames.dataset)",
+        "preparar_importacao.py": "Preparar copia independente para o Revo",
         "limpar_por_placa.py": "Limpar frames por altura sobre a placa",
         "uniao_scans.py": "Unir duas partes (frames de B em A)",
         "revo_pipeline.py": "Fusão, malha e exportação no Revo",
@@ -111,6 +112,7 @@ GRUPOS = {
     "rodar_tudo.py": [
         ("Entrada e saída", ["projeto", "so_limpar", "saida_limpo", "saida_ply", "saida_uniao", "scans"]),
         ("Limpeza dos frames", ["periferia_mm", "periferia_banda", "periferia_alargue", "jobs"]),
+        ("Precisao e preservacao", ["modo_limpeza", "pixel_tol", "pixel_comp_min", "pixel_adaptativo", "temporal_passo", "temporal_min"]),
         ("União de duas partes", ["unir", "lados"]),
         ("Resolução e malha (Revo)", ["ponto", "malha", "otimizar", "grade"]),
         ("Entregáveis e opções do Revo", ["entregaveis", "furos", "marcadores", "manter_isolados"]),
@@ -127,6 +129,7 @@ GRUPOS = {
     ],
     "limpar_raw.py": [
         ("Entrada e saída", ["projeto", "saida", "scans", "sem_ply_antigos", "jobs"]),
+        ("Precisao e preservacao", ["modo_limpeza", "pixel_tol", "pixel_comp_min", "pixel_adaptativo", "temporal_passo", "temporal_min"]),
         ("Filtros", ["sem_pixels", "sem_ilhas", "so_peca", "ext_max_mm", "min_mantido"]),
         ("Remoção da mesa (periferia)", ["periferia_mm", "periferia_banda", "periferia_alargue"]),
     ],
@@ -134,6 +137,13 @@ GRUPOS = {
 
 # ajustes de rotulo para destinos conhecidos
 ROTULOS = {
+    "modo_limpeza": "Modo de limpeza",
+    "pixel_tol": "Tolerancia minima (mm)",
+    "pixel_comp_min": "Componente minimo proposto (pixels)",
+    "pixel_adaptativo": "Adaptar ao ruido local (automatico no modo precisao)",
+    "temporal_passo": "Separacao dos quadros de evidencia",
+    "temporal_min": "Confirmacoes de espaco livre para remover",
+
     "ponto": "Resolução da nuvem (Point Distance, mm)",
     "grade": "Resolução da malha (Grid Size, mm)",
     "malha": "Tipo de malha",

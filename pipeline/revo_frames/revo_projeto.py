@@ -661,7 +661,7 @@ def limpar_fuse(scan, seg, fuse_entrada, fuse_saida, log=print):
 
 
 # ---------------------------------------------------------------- gravacao
-def filtro_pixels(D, tol=1.0, comp_min=30):
+def filtro_pixels(D, tol=1.0, comp_min=30, adaptativo=False):
     """Mascara dos pixels a manter num mapa de profundidade D (h x w, NaN onde invalido).
 
     Remove (1) pixels voadores: o pixel desvia mais de `tol` mm da media dos dois vizinhos em
@@ -669,15 +669,32 @@ def filtro_pixels(D, tol=1.0, comp_min=30):
     direcao e borda real fica ~0 ao longo da borda; so ruido entre a peca e o fundo desvia nas
     quatro. (2) manchas pequenas de pixels desconectados do resto (< `comp_min` px).
     """
+    if not np.isfinite(tol) or tol <= 0 or comp_min < 1:
+        raise ValueError("tol deve ser positivo e comp_min >= 1")
+    D = np.where(np.isfinite(D) & (D > 0), D, np.nan)
     h, w = D.shape
     pad = np.pad(D, 1, constant_values=np.nan)
     sh = lambda dy, dx: pad[1 + dy:1 + dy + h, 1 + dx:1 + dx + w]
     res = np.full(D.shape, np.inf, np.float32)
+    pares = np.zeros(D.shape, np.uint8)
     for dy, dx in ((0, 1), (1, 0), (1, 1), (1, -1)):
         r = np.abs(D - (sh(dy, dx) + sh(-dy, -dx)) / 2)
+        pares += np.isfinite(r)
         res = np.minimum(res, np.where(np.isnan(r), np.inf, r))
     # sem nenhum par de vizinhos validos nao ha como julgar: nao e voador (so a regra das manchas atua)
-    val = ~np.isnan(D) & ~(np.isfinite(res) & (res > tol))
+    limite = tol
+    if adaptativo:
+        # Estima dispersao das segundas diferencas localmente. Mediana/MAD
+        # nao deixam um pico isolado aumentar seu proprio limite de rejeicao.
+        validos = np.isfinite(res)
+        preenchido = np.where(validos, res, 0.0)
+        med = ndimage.median_filter(preenchido, size=5, mode="nearest")
+        mad = ndimage.median_filter(np.abs(preenchido - med), size=5, mode="nearest")
+        apoio = ndimage.uniform_filter(validos.astype(float), size=5, mode="nearest")
+        limite = np.maximum(tol, med + 4.5 * 1.4826 * mad)
+        # Pouco apoio nao permite estimativa robusta: conservar o pixel.
+        limite = np.where((apoio >= 0.8) & (pares >= 3), limite, np.inf)
+    val = ~np.isnan(D) & ~(np.isfinite(res) & (res > limite))
     lab, n = ndimage.label(val, structure=np.ones((3, 3)))
     tam = np.bincount(lab.ravel(), minlength=n + 1)
     tam[0] = 0
@@ -718,7 +735,8 @@ PLY_ANTIGOS = ("fuse.ply", "fuse_mesh.ply", "mark.ply")
 
 
 def limpar_scan(scan, seg, destino_scan, log=print, pixels=True, ilhas=True, min_mantido=0.0, sem_ply_antigos=False,
-                zerar_vazios=False, min_pix_quadro=1):
+                zerar_vazios=False, min_pix_quadro=1, pixel_tol=1.0, pixel_comp_min=30,
+                pixel_adaptativo=False, precisao=False, temporal_passo=8, temporal_min=2):
     """Grava a copia do scan com os pixels fora da peca apagados em cada quadro.
 
     Alem da mascara da peca (`mascara_manter`): `pixels` tira pixels voadores e manchas 2D
@@ -739,7 +757,10 @@ def limpar_scan(scan, seg, destino_scan, log=print, pixels=True, ilhas=True, min
     scan.c.execute("pragma wal_checkpoint(TRUNCATE)")
     shutil.copy(scan.db, db)
     cn = sqlite3.connect(db)
+    from precisao import ValidadorTemporal, render_cortes
+    temporal = ValidadorTemporal(scan, pixel_tol, temporal_passo, temporal_min) if precisao else None
     vazios, oks, amostra, tirados = [], {}, [], []
+    bases, fixos, detalhes = {}, {}, {}
     n_total = n_mask = n_pix = 0
     # passada 1: mascara da peca + filtro de pixels por quadro
     for k, i in enumerate(scan.ids):
@@ -751,23 +772,40 @@ def limpar_scan(scan, seg, destino_scan, log=print, pixels=True, ilhas=True, min
         n_total += len(pix)
         n_mask += int(ok.sum())
         base = ok
+        bases[k] = base.copy()
         if pixels and ok.any():
             D = np.full(w * h, np.nan, np.float32)
             D[mask] = z
-            ok = ok & filtro_pixels(D.reshape(h, w)).ravel()[pix]
+            ok = ok & filtro_pixels(D.reshape(h, w), tol=pixel_tol,
+                                   comp_min=pixel_comp_min, adaptativo=pixel_adaptativo).ravel()[pix]
+            if precisao:
+                fixos[k] = base & filtro_pixels(D.reshape(h, w), tol=pixel_tol,
+                                               comp_min=pixel_comp_min).ravel()[pix]
+                mapa = D.reshape(h, w)
+                # Contorno de cobertura e saltos de profundidade: apenas mede;
+                # a decisao de apagar exige evidencia em outros quadros.
+                valido = np.isfinite(mapa)
+                borda = valido & ~ndimage.binary_erosion(valido)
+                for eixo in (0, 1):
+                    salto = np.abs(np.diff(mapa, axis=eixo)) > pixel_tol
+                    a = [slice(None), slice(None)]; b = a.copy()
+                    a[eixo] = slice(None, -1); b[eixo] = slice(1, None)
+                    borda[tuple(a)] |= salto; borda[tuple(b)] |= salto
+                detalhes[k] = borda.ravel()[pix] & base
         n_pix += int(ok.sum())
         oks[k] = ok
         par = np.arange(len(P)) % 2 == 0          # mesma amostra (pixels pares) nos dois lados
         amostra.append(P[ok & par].astype(np.float32))
         tirados.append(P[base & ~ok & par].astype(np.float32))
-    if n_pix < min_mantido * max(1, n_total):
+    if (n_mask if precisao else n_pix) < min_mantido * max(1, n_total):
         log(f"   REVISAR: a limpeza manteria so {n_pix/max(1,n_total)*100:.0f}% dos pontos (minimo {min_mantido*100:.0f}%); "
             f"escolha da peca suspeita, scan copiado sem alteracao")
         cn.close()
         os.remove(db)
         shutil.copytree(scan.pasta, destino_scan, dirs_exist_ok=True)
         return dict(revisar=True, antes=n_total, depois=n_pix)
-    A, T0 = np.vstack(amostra), np.vstack(tirados)
+    A = np.vstack(amostra) if amostra else np.empty((0, 3))
+    T0 = np.vstack(tirados) if tirados else np.empty((0, 3))
     # ilhas 3D soltas
     ilh = ilhas_3d(A) if ilhas and len(A) else None
     seg["ilhas"] = ilh          # render_comparacao mostra o resultado final
@@ -785,6 +823,12 @@ def limpar_scan(scan, seg, destino_scan, log=print, pixels=True, ilhas=True, min
         auditar(A[~mascara_ilhas(A, ilh)], "ilhas")
     # passada 2: grava
     tot_antes = tot_depois = 0
+    qualidade = dict(candidatos=0, confirmados=0, com_apoio=0, inconclusivos=0,
+                     borda_antes=0, borda_depois=0, fixo_depois=0,
+                     adaptativo_depois=0, cobertura_amostrada=None)
+    cob_base, cob_local, cob_final, removidos_precisao = [], [], [], []
+    por_quadro = []
+    revisao_pixels = {}
     for k, i in enumerate(scan.ids):
         if not scan.tem_prof[k]:
             continue
@@ -793,6 +837,31 @@ def limpar_scan(scan, seg, destino_scan, log=print, pixels=True, ilhas=True, min
         ok = oks[k]
         if ilh is not None:
             ok = ok & mascara_ilhas(P, ilh)
+        if precisao:
+            base = bases[k]
+            proposta_local = ok.copy()
+            rejeitar, evidencia = temporal.validar(k, P, base & ~ok, referencia=base)
+            if evidencia['candidatos']:
+                revisao_pixels[f'q{i}_dimensoes'] = np.array([h, w], np.int32)
+                for nome_evidencia, mascara in temporal.ultima_evidencia.items():
+                    revisao_pixels[f'q{i}_{nome_evidencia}'] = pix[mascara].astype(np.int32)
+            for chave, valor in evidencia.items():
+                qualidade[chave] += valor
+            qualidade['fixo_depois'] += int(fixos.get(k, base).sum())
+            qualidade['adaptativo_depois'] += int(oks[k].sum())
+            borda = detalhes.get(k, np.zeros(len(P), bool))
+            ok = base & ~rejeitar
+            qualidade['borda_antes'] += int(borda.sum())
+            qualidade['borda_depois'] += int((borda & ok).sum())
+            # Mesmos pontos amostrados nos dois lados; nao mede exatidao absoluta.
+            am = np.arange(len(P)) % 8 == 0
+            cob_base.append(P[base & am])
+            cob_local.append(P[proposta_local & am])
+            cob_final.append(P[ok & am])
+            removidos_precisao.append(P[rejeitar & am])
+            por_quadro.append(dict(quadro=int(i), antes=len(P), selecionados=int(base.sum()),
+                                   depois=int(ok.sum()), **evidencia))
+        oks[k] = ok
         tot_antes += len(pix)
         if ok.sum() < min_pix_quadro:
             vazios.append(k)       # quadro so com prato/apoio
@@ -813,13 +882,18 @@ def limpar_scan(scan, seg, destino_scan, log=print, pixels=True, ilhas=True, min
     # consolida o journal (o Revo Scan usa modo WAL) dentro do arquivo principal
     cn.execute("pragma wal_checkpoint(TRUNCATE)")
     cn.close()
+    if integ != 'ok':
+        raise RuntimeError('integridade SQLite: ' + integ)
     for ext in ("-wal", "-shm", "-journal"):
         if os.path.exists(db + ext):
             raise RuntimeError("sobrou arquivo de journal " + ext)
     with open(db, "r+b") as f:
         f.write(scan.sig)
     os.makedirs(os.path.join(destino_scan, "cache"), exist_ok=True)
-    shutil.move(db, os.path.join(destino_scan, "cache", "frames.dataset"))
+    # Criar o arquivo no destino faz herdar as permissoes da entrega. Mover do
+    # TemporaryDirectory preserva a ACL privada do temporario no Windows e
+    # impede o Revo Scan (processo do usuario) de ler o banco.
+    shutil.copyfile(db, os.path.join(destino_scan, "cache", "frames.dataset"))
 
     # raw_preview filtrado pela mesma regra (esta no referencial do mundo)
     hdr, prev = ler_ply(os.path.join(scan.pasta, "raw_preview.ply"))
@@ -827,12 +901,38 @@ def limpar_scan(scan, seg, destino_scan, log=print, pixels=True, ilhas=True, min
     if ilh is not None:
         okp &= mascara_ilhas(prev[:, :3].astype(float), ilh)
     gravar_ply(os.path.join(destino_scan, "raw_preview.ply"), hdr, prev[okp])
+    seg['_mascaras_finais'] = oks
+    if precisao:
+        def celulas(partes):
+            p = np.vstack(partes) if partes else np.empty((0, 3))
+            return set(map(tuple, np.floor(p / 0.5).astype(np.int64)))
+        cb, cf = celulas(cob_base), celulas(cob_final)
+        render_cortes(np.vstack(cob_base), np.vstack(cob_local), np.vstack(cob_final),
+                      os.path.join(destino_scan, 'cortes_qualidade.png'))
+        qualidade['cobertura_amostrada'] = dict(celula_mm=0.5, passo_pixels=8,
+            celulas_base=len(cb), celulas_mantidas=len(cf), fracao=len(cf)/max(1,len(cb)))
+        qualidade['pares_suspeitos'] = sum(p['suspeita_desalinhamento'] for q in temporal.diagnosticos for p in q['pares'])
+        qualidade['diagnostico'] = 'vies de profundidade por reprojecao; nao e erro absoluto ou alinhamento ponto-a-plano'
+        qualidade['por_quadro'] = por_quadro
+        qualidade['reprojecoes'] = temporal.diagnosticos
+        ref = seg.get('ref_arvore')
+        rr = np.vstack(removidos_precisao) if removidos_precisao else np.empty((0, 3))
+        if ref is not None and len(rr):
+            dist = ref.query(rr, workers=THREADS)[0]
+            qualidade['removidos_proximos_fuse_amostra'] = dict(n=len(rr), abaixo_04mm=int((dist < 0.4).sum()))
+        with open(os.path.join(destino_scan, 'qualidade_precisao.json'), 'w', encoding='utf-8') as f:
+            json.dump(qualidade, f, indent=2)
+        np.savez_compressed(os.path.join(destino_scan, 'revisao_pixels.npz'), **revisao_pixels)
+        log(f"   precisao: {qualidade['candidatos']:,} candidatos; {qualidade['confirmados']:,} removidos por espaco livre em outros quadros; "
+            f"{qualidade['com_apoio']:,} com apoio; {qualidade['inconclusivos']:,} preservados por incerteza")
     log(f"   pontos dos quadros: {tot_antes:,} -> {tot_depois:,} ({tot_depois/max(1,tot_antes)*100:.0f}% mantidos; "
-        f"peca {n_mask:,} -> pixels voadores {n_mask-n_pix:,} tirados) | preview {len(prev):,} -> {okp.sum():,} | integridade: {integ}")
+        f"peca {n_mask:,} -> filtro local propoe {n_mask-n_pix:,} descartes) | preview {len(prev):,} -> {okp.sum():,} | integridade: {integ}")
     if vazios:
         log(f"   AVISO: {len(vazios)} quadros sem ponto da peca " + ("tiveram a profundidade removida" if zerar_vazios else "foram mantidos como estavam"))
     return dict(antes=tot_antes, depois=tot_depois, vazios=len(vazios), integridade=integ,
-                voadores=n_mask - n_pix, ilhas_removidas=ilh["n_removidas"] if ilh else 0)
+                voadores=qualidade['confirmados'] if precisao else n_mask - n_pix,
+                ilhas_removidas=ilh["n_removidas"] if ilh and not precisao else 0,
+                precisao={k: v for k, v in qualidade.items() if k not in ('por_quadro', 'reprojecoes')} if precisao else None)
 
 
 def gravar_revo(origem_revo, destino_proj, nome, nos):
@@ -855,10 +955,19 @@ def render_comparacao(scan, seg, path, nquadros=60):
     import matplotlib.pyplot as plt
     ks = [k for k in range(len(scan.ids)) if scan.tem_prof[k]]
     ks = ks[:: max(1, len(ks) // nquadros)]
-    P = np.vstack([p for k in ks if (p := scan.pontos(k, passo=6)[0]) is not None])
-    ok = mascara_manter(P, seg)
-    if seg.get("ilhas") is not None:
-        ok &= mascara_ilhas(P, seg["ilhas"])
+    partes, manter = [], []
+    for k in ks:
+        p = scan.pontos(k, passo=6)[0]
+        if p is not None:
+            partes.append(p)
+            if '_mascaras_finais' in seg:
+                manter.append(seg['_mascaras_finais'][k][::6])
+            else:
+                m = mascara_manter(p, seg)
+                if seg.get('ilhas') is not None:
+                    m &= mascara_ilhas(p, seg['ilhas'])
+                manter.append(m)
+    P, ok = np.vstack(partes), np.concatenate(manter)
     n = seg["n"]
     u = np.cross(n, [1, 0, 0]); u /= np.linalg.norm(u); v = np.cross(n, u)
     L = np.c_[P @ u, P @ v, P @ n + seg["d"]]

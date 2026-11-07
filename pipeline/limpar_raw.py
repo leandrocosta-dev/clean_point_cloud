@@ -16,6 +16,7 @@ import shutil
 import sys
 import tempfile
 import time
+from pathlib import Path
 from concurrent.futures import ProcessPoolExecutor
 
 import numpy as np
@@ -34,12 +35,17 @@ def copiar_intacto(proj, saida, s):
     shutil.copytree(os.path.join(proj, "data", s), os.path.join(saida, "data", s))
 
 
-def processar(proj, s, saida, pixels=True, ilhas=True, periferia_mm=0.0, per_banda=2.5, per_alargue=20.0, sem_ply_antigos=False, ext_max_mm=0.0, min_mantido=MIN_MANTIDO, so_peca=False):
+def processar(proj, s, saida, pixels=True, ilhas=True, periferia_mm=0.0, per_banda=2.5, per_alargue=20.0, sem_ply_antigos=False, ext_max_mm=0.0, min_mantido=MIN_MANTIDO, so_peca=False, pixel_tol=1.0, pixel_comp_min=30, pixel_adaptativo=False, precisao=False, temporal_passo=8, temporal_min=2):
     """Limpa um scan (roda num processo proprio). Devolve (id, relatorio, log).
 
     Qualquer scan que nao possa ser limpo com seguranca (sem raw_preview, calibracao ruim, limpeza
     que tira pontos demais, erro) e copiado sem alteracao: um scan problematico nao derruba o lote.
     """
+    try:
+        import psutil
+        psutil.Process().nice(psutil.BELOW_NORMAL_PRIORITY_CLASS)
+    except (ImportError, OSError):
+        pass
     t0 = time.time()
     log = [f"== {s}"]
     pasta = os.path.join(proj, "data", s)
@@ -62,14 +68,16 @@ def processar(proj, s, saida, pixels=True, ilhas=True, periferia_mm=0.0, per_ban
                 # sem a calibracao estar ruim, por isso vale o erro relativo ao espacamento
                 _, prev = ler_ply(os.path.join(scan.pasta, "raw_preview.ply"))
                 X = prev[:, :3].astype(float)
-                esp = float(np.median(cKDTree(X).query(X, k=2, workers=-1)[0][:, 1]))
+                esp = float(np.median(cKDTree(X).query(X, k=2, workers=int(os.environ.get('REVO_THREADS', '4')))[0][:, 1]))
                 if max(erros.values()) > ERRO_MAX_CALIB and max(erros.values()) / esp > ERRO_REL_MAX:
                     log.append(f"   PULADO: erro {max(erros.values()):.2f} mm = {max(erros.values())/esp:.2f} x espacamento do preview; copiado sem alteracao")
                     return s, dict(status="pulado", erros=erros), _fechar(scan, proj, saida, s, log)
                 seg = segmentar_peca(scan, periferia_mm=periferia_mm, per_banda=per_banda, per_alargue=per_alargue, ext_max_mm=ext_max_mm, so_peca=so_peca, log=lambda *a: log.append(" ".join(map(str, a))))
                 seg = adicionar_referencia_fuse(scan, seg, log=lambda *a: log.append(" ".join(map(str, a))))
                 r = limpar_scan(scan, seg, os.path.join(saida, "data", s), log=lambda *a: log.append(" ".join(map(str, a))),
-                                pixels=pixels, ilhas=ilhas, min_mantido=min_mantido, sem_ply_antigos=sem_ply_antigos)
+                                pixels=pixels, ilhas=ilhas, min_mantido=min_mantido, sem_ply_antigos=sem_ply_antigos, zerar_vazios=True,
+                                pixel_tol=pixel_tol, pixel_comp_min=pixel_comp_min, pixel_adaptativo=pixel_adaptativo or precisao,
+                                precisao=precisao, temporal_passo=temporal_passo, temporal_min=temporal_min)
                 if r.get("revisar"):
                     return s, dict(status="revisar", erros=erros, **r), _fechar(scan, proj, saida, s, log, copiar=False)
                 render_comparacao(scan, seg, os.path.join(saida, f"{s}_antes_depois.png"))
@@ -106,26 +114,47 @@ def main():
     ap.add_argument("--min-mantido", type=float, default=MIN_MANTIDO, help="fracao minima de pontos mantidos; abaixo disso o scan e copiado intacto (com --ext-max-mm a placa some e a fracao cai: baixe)")
     ap.add_argument("--so-peca", action="store_true", help="mantem so o componente escolhido (sem os grandes/colados); para cena suja com a peca isolada")
     ap.add_argument("--jobs", type=int, default=0, help="scans em paralelo (0 = automatico)")
+    ap.add_argument("--pixel-tol", type=float, default=1.0, help="desvio minimo em mm para rejeitar pixel voador")
+    ap.add_argument("--pixel-comp-min", type=int, default=30, help="area minima em pixels; 1 preserva componentes pequenos")
+    ap.add_argument("--pixel-adaptativo", action="store_true", help="filtro local robusto mediana/MAD, preserva regioes sem apoio")
+    ap.add_argument("--modo-limpeza", choices=["precisao", "classico"], default="precisao", help="precisao valida descartes de pixels/ilhas em outros quadros; classico usa somente filtros locais")
+    ap.add_argument("--temporal-passo", type=int, default=8, help="separacao entre quadros de evidencia (quatro vizinhos)")
+    ap.add_argument("--temporal-min", type=int, choices=[2, 3, 4], default=2, help="minimo de quadros que observam espaco livre para confirmar descarte")
+    ap.add_argument("--manter-ids", action="store_true", help="uso interno: adia novos IDs ate a uniao; nao importar junto ao original")
     a = ap.parse_args()
+    if not np.isfinite(a.pixel_tol) or a.pixel_tol <= 0 or a.pixel_comp_min < 1 or a.jobs < 0:
+        ap.error("pixel-tol deve ser positivo, pixel-comp-min >= 1 e jobs >= 0")
+    if not 0 <= a.min_mantido <= 1:
+        ap.error("min-mantido deve estar entre 0 e 1")
+    if a.temporal_passo < 1:
+        ap.error("temporal-passo deve ser >= 1")
     proj = os.path.abspath(a.projeto)
     revo = [f for f in os.listdir(proj) if f.endswith(".revo")][0]
     nome = os.path.splitext(revo)[0] + "_limpo"
     saida = os.path.abspath(a.saida or os.path.join(os.path.dirname(proj), nome))
+    if Path(saida).resolve().is_relative_to(Path(proj).resolve()):
+        ap.error("saida deve estar fora do projeto original")
     if os.path.exists(saida) and (not os.path.isdir(saida) or os.listdir(saida)):   # pasta vazia pode ser reaproveitada
         sys.exit(f"destino ja existe: {saida}")
     todos = [n["guid"] for n in json.load(open(os.path.join(proj, revo), encoding="utf-8"))["nodes"]]
     scans = a.scans or todos
+    if not scans or len(set(scans)) != len(scans) or not set(scans) <= set(todos):
+        ap.error("selecao de scans vazia, duplicada ou desconhecida")
     os.makedirs(os.path.join(saida, "data"))
-    # cada scan usa ~2 GB de RAM por 10 M de pontos; 6 em paralelo cabem folgados em 64 GB
-    jobs = a.jobs or min(len(scans), 6, os.cpu_count() or 1)
-    os.environ["REVO_THREADS"] = str(max(1, (os.cpu_count() or 1) // jobs))
+    # Orcamento total de ate 12 threads entre os processos.
+    jobs = min(a.jobs or min(len(scans), 4, os.cpu_count() or 1), 12)
+    os.environ["REVO_THREADS"] = str(max(1, min(12, os.cpu_count() or 1) // jobs))
+    for chave in ('OMP_NUM_THREADS', 'OPENBLAS_NUM_THREADS', 'MKL_NUM_THREADS'):
+        os.environ[chave] = os.environ['REVO_THREADS']
     print(f"{len(scans)} scans, {jobs} em paralelo, {os.environ['REVO_THREADS']} threads cada", flush=True)
     rel = {}
     with ProcessPoolExecutor(jobs) as ex:
         for s, r, log in ex.map(processar, [proj] * len(scans), scans, [saida] * len(scans),
                                     [not a.sem_pixels] * len(scans), [not a.sem_ilhas] * len(scans),
                                     [a.periferia_mm] * len(scans), [a.periferia_banda] * len(scans), [a.periferia_alargue] * len(scans),
-                                    [a.sem_ply_antigos] * len(scans), [a.ext_max_mm] * len(scans), [a.min_mantido] * len(scans), [a.so_peca] * len(scans)):
+                                    [a.sem_ply_antigos] * len(scans), [a.ext_max_mm] * len(scans), [a.min_mantido] * len(scans), [a.so_peca] * len(scans),
+                                    [a.pixel_tol] * len(scans), [a.pixel_comp_min] * len(scans), [a.pixel_adaptativo] * len(scans),
+                                    [a.modo_limpeza == 'precisao'] * len(scans), [a.temporal_passo] * len(scans), [a.temporal_min] * len(scans)):
             print("\n".join(log), flush=True)
             rel[s] = r
     for s in todos:   # scans fora de --scans vao sem alteracao
@@ -133,6 +162,11 @@ def main():
             shutil.copytree(os.path.join(proj, "data", s), os.path.join(saida, "data", s))
     gravar_revo(os.path.join(proj, revo), saida, nome, todos)
     json.dump(rel, open(os.path.join(saida, "relatorio_limpeza.json"), "w", encoding="utf-8"), indent=2)
+    from relatorio_qualidade import gravar_relatorio
+    gravar_relatorio(saida, rel, vars(a))
+    if not a.manter_ids:
+        from preparar_importacao import reidentificar
+        reidentificar(os.path.join(saida, nome + '.revo'))
     print("saida:", saida)
 
 

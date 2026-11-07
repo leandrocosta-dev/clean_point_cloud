@@ -197,3 +197,46 @@ Objetivo do usuario: um pára-choque COMPLETO fundido e alinhado, para engenhari
 - **Guia consolidado**: `diario/GUIA_PIPELINE.md` (receita por tipo de projeto, ordem exata dos comandos do Onix, NAO REPETIR, fatos da UI do Revo, estado dos projetos, cuidados com a maquina) + memoria (`guia-pipeline-completo`, `feedback-modo-de-trabalho`). Segundo projeto: limpeza dos frames rodando em `Desktop\_p2_limpo`.
 - **Fragmentos e lacunas do para-choque (2026-10-22)**: 4 componentes medias na malha: 1 chapa solta a 82 mm do corpo (removida: `limpar_fragmentos.py`, 70.802 pontos) e 3 placas da grade do difusor ligadas por frestas de 1,4-1,9 mm (mantidas). `lacunas.py` na malha de 2 M: 967 contornos, 148 com perimetro >= 40 mm; face externa fechada exceto aberturas reais/bordas; face interna/nervuras com muitos contornos abertos (cobertura parcial). Verificacao por leave-one-out ja existia: `avaliar_por_scan` = cada scan contra os OUTROS, 56-170 um.
 
+
+## 2026-11-06: filtro adaptativo e quadros vazios
+- limpar_raw agora chama limpar_scan com zerar_vazios=True: quadros totalmente rejeitados nao reinserem a profundidade original.
+- Opcoes pixel-adaptativo, pixel-tol e pixel-comp-min expostas no argparse e encaminhadas por rodar_tudo; mediana/MAD local conserva regioes com pouco apoio. Nao altera coordenadas.
+- Seis testes sinteticos passaram: plano inclinado, degrau, pico, estrutura fina, dados invalidos e parametros invalidos. Help dos dois CLIs validado. Sem validacao em scan real nesta rodada.
+- .venv aponta para Python312 removido; verificacao com Python 3.12.14 do runtime e dependencias de .venv/Lib/site-packages. Ambiente local ainda precisa reparo para executar o launcher normalmente.
+
+## 2026-11-06: teste real Project20261106_210152
+- Saida em pipeline/output/Project20261106_210152_adaptativo; originais preservados. Tres scans limpos e Merge_01 copiado identico (hash); refazer fusao para refletir limpeza.
+- Tolerancia 1 mm, comp_min 30, adaptativo, 3 processos x 4 threads. Remocao 16,03-18,61%; 28.914 descartes pelo filtro de pixels, restante pela selecao geometrica.
+- Auditoria completa dos 1.543 quadros: poses/FrameInfo identicos, profundidades mantidas exatas, nenhum pixel novo, integridade ok; nenhum quadro vazio.
+- 90 quadros comparados: fixo rejeita 5.539, adaptativo 2.908. Nao prova aumento de precisao: 40,9-59,0% dos removidos 2D amostrados estao a <0,4 mm do fuse. Sem fusao/validacao visual 3D nesta rodada. Relatorio RESULTADO_TESTE.md na saida.
+
+## 2026-11-06: upgrade de precisao com evidencia temporal
+- Novo modo padrao precisao em limpar_raw/rodar_tudo. Filtro local adaptativo e ilhas propoem descartes; pelo menos 2 de ate 4 quadros separados por 8 observacoes precisam ver espaco livre. Apoio, oclusao, janela incompleta, pouca sobreposicao e pares com vies alto preservam candidatos. Segmentacao geometrica inicial continua ativa.
+- Diagnostico por reprojecao usa residuos completos, incluindo deriva grande (teste com 10 mm); nao e metrica ponto-a-plano nem correcao de poses. Tolerancia temporal ajustada pela dispersao, limitada a 2x o minimo.
+- QUALIDADE.md, configuracao_limpeza.json, detalhes por quadro, cortes de 1 mm e revisao_pixels.npz. Projecoes antes/depois agora usam as mascaras finais, nao apenas segmentacao.
+- IDs novos na entrega por padrao; rodar_tudo adia remapeamento ate depois da uniao e ajusta selecao enviada ao Revo. preparar_importacao reaproveita a mesma funcao. auditar_projeto verifica poses, profundidades, mascaras, bancos e compara versoes.
+- 18 testes passaram, incluindo detalhe fino confirmado, pico isolado, oclusao, falta de cobertura, deriva grande, integracao SQLite e referencias de IDs; catalogo GUI e help verificados.
+- Teste real FINAL: pipeline/output/Project20261106_210152_precisao_v4. 41.354.251 -> 34.054.154 observacoes; 27.249 preservadas a mais que a copia corrigida anterior, nenhum descarte adicional. Dos 28.914 candidatos locais, 1.665 rejeitados com evidencia; 13 pares suspeitos (nao prova erro de pose). Cobertura amostrada 99,73-99,96% em celulas de 0,5 mm.
+- Auditoria integral de 1.543 quadros: FrameInfo/poses identicos, profundidades exatas, mascaras subconjuntos, integridade ok; merge copiado. Nao houve fusao/abertura no Revo nesta rodada nem referencia fisica. .venv segue com interpretador ausente; runtime 3.12.14 + dependencias locais usado na validacao.
+
+## 2026-11-06: causa confirmada do .revo aparentemente vazio
+- Log do Revo 6.4.2: VersionConverter carrega 4 nodes, depois weakly_canonical retorna Acesso negado em cache/frames.dataset. A validacao anterior dentro do processo do agente nao detectava a falta de acesso pelo processo do usuario.
+- ACL do dataset movido de TemporaryDirectory tinha somente SYSTEM, Administradores e Direitos do Proprietario; faltava heranca da pasta de entrega. shutil.move no mesmo volume preservava essa ACL. Copia anterior corrigida funcionou tambem porque copytree recriava os arquivos, nao apenas pelos novos IDs.
+- Troca por shutil.copyfile em revo_projeto.limpar_scan, limpar_por_fuse e limpar_por_consenso: novos datasets herdam acesso do destino. Arquivo nao foi editado por mudanca de seguranca global.
+- Entrega reparada: pipeline/output/Project20261106_210152_acesso_corrigido, IDs novos e nomes legiveis. SHA-256 dos datasets identico ao da precisao_v4. Auditoria completa e 18 testes passaram.
+- VALIDADO NA UI: importados 4 itens no grupo grewg; aberto 20261106_210152_PRECISO, peca visivel em Raw Data. Fusao ainda nao refeita. Originais preservados.
+
+## 2026-11-06: uniao dos tres scans 210152/210505/210900
+- Pedido do usuario: unir as tres nuvens e limpar ruido restante. Base = Project20261106_210152_acesso_corrigido; transformacoes iniciais do Merge_01 original. ICP multivista testado, rejeitado por nao melhorar soma do vies absoluto por celulas de 30 mm. Alinhamento original mantido; vies medianos por celula 0,0092 / 0,0041 / 0,0214 mm (nuvenzinhas originais do Revo, nao exatidao fisica).
+- unir_varios montou um unico dataset com 1.543 quadros. Importacao validada e fusao nativa no Revo 6.4.2 executada em 0,10 mm, remover isolamento ligado, sem remover marcadores e sem fechar furos. Fundida nativa 407.108 pontos, componente unico em grade 0,2 mm.
+- 13 pontos esparsos removidos (<4 vizinhos a 0,2 mm, nenhum scan referencia a <0,35 mm, >0,18 mm do nucleo denso). Fundida final 407.095 pontos, sem deslocar coordenadas.
+- Passada final de frames: tira observacao so se >0,8 mm da fundida E >0,5 mm de todas referencias originais alinhadas. Calibracao da uniao erro 0,233 mm contra preview. 189.540 observacoes removidas (34.054.154 -> 33.864.614), preview -88.
+- Auditoria dos 1.543 quadros: poses da uniao identicas, profundidades mantidas exatas, integridade ok, nenhum quadro vazio. Entrega completa com fuse.ply salvo e IDs novos: pipeline/output/Project20261106_210152_ENTREGA_UNIDA.
+- VALIDACAO FINAL NA UI: importado o .revo de ENTREGA_UNIDA, aberto PECA_UNIDA_LIMPA_COPIA, selecionado fuse; Revo mostra 407.095 pontos a 0,10 mm. Conferidas vistas frontal, lateral e traseira. Aberturas e detalhes internos presentes; sem residuos soltos visiveis nessas vistas. Isso nao comprova ruido zero ou exatidao absoluta.
+
+## 2026-11-06: correcao local do vao sob o bloco quadrado
+- Usuario confirmou o vao entre a face inferior do bloco e a nervura abaixo. Cortes das tres referencias mostram membrana tambem nos scans; votos de espaco livre foram inconclusivos. Correcao localizada guiada pela confirmacao do usuario, nao deteccao automatica comprovada de ruido.
+- Limites estimados nas superficies medidas, margem de 0,15 mm nas faces e 0,04 mm no contorno interno. Removidos 210 pontos da fundida (407.095 -> 406.885); demais coordenadas e normais exatamente iguais. Nenhuma superficie criada ou deslocada; largura fisica nominal nao verificada.
+- Mesma mascara aplicada aos frames: 15.447 observacoes removidas, 33.849.167 mantidas em 1.543 quadros. Auditoria integral: poses/FrameInfo e profundidades retidas identicos, nenhum quadro vazio, integridade SQLite ok.
+- Nova entrega preservando anteriores: pipeline/output/Project20261106_210152_VAO_CORRIGIDO/PECA_VAO_PRESERVADO.revo. Mascara, comparacao e limites em correcao_vao.json, comparacao_vao.png e LEIA-ME_CORRECAO_VAO.md. Fusoes futuras precisam reaplicar a mascara local.
+- VALIDADO NA UI: projeto importado e aberto no Revo 6.4.2, fuse com 406.885 pontos visivel nas vistas frontal e obliqua traseira. Confirmacao dimensional da abertura depende de referencia fisica.

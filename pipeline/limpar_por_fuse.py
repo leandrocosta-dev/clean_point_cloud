@@ -85,7 +85,7 @@ def processar(orig, limpo, saida, s, tol, min_pix):
             f.write(sl.sig)
         shutil.copytree(pasta_l, dest, ignore=shutil.ignore_patterns("cache"))
         os.makedirs(os.path.join(dest, "cache"))
-        shutil.move(db, os.path.join(dest, "cache", "frames.dataset"))
+        shutil.copyfile(db, os.path.join(dest, "cache", "frames.dataset"))
     return (f"{s}: {antes:,} -> {depois:,} pontos ({depois / max(1, antes) * 100:.1f}% mantidos) | "
             f"{vazios} quadros sem peca (profundidade removida) | integridade {integ}")
 
