@@ -22,20 +22,14 @@ from concurrent.futures import ProcessPoolExecutor
 import numpy as np
 import open3d as o3d
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "revo_frames"))
 from revo_projeto import RevoScan
 
 reg = o3d.pipelines.registration
 
 
-def baixa_prioridade():
-    """Processo pesado em prioridade ABAIXO do normal: sob carga total o VS Code/Claude Code ficam sem CPU e
-    caem (e esta maquina ja mostrou instabilidade de hardware sob carga continua em todos os nucleos)."""
-    try:
-        import psutil
-        psutil.Process().nice(psutil.BELOW_NORMAL_PRIORITY_CLASS)
-    except Exception:
-        pass
+from recursos import baixa_prioridade  # noqa: E402,F401  (reexportado: outros scripts importam daqui)
 
 
 # ---------------------------------------------------------------- nuvens
@@ -76,16 +70,42 @@ def _pcd(P, voxel, normais=True):
 ESCALAS = [(5.0, 15.0), (2.0, 4.0), (1.0, 2.0)]    # (voxel, distancia maxima) em mm; a precisao fina fica para `refinar`
 
 
+def escala():
+    """Fator das grades grossas (FPFH 6 mm, ESCALAS, pre-selecao 4 mm). 1 = peca grande (Onix).
+
+    Vem de ALINHAR_ESCALA (herdada pelos processos isolados). `--escala auto` calcula pela diagonal da peca:
+    peca de ~50 mm (Projeto 8) -> ~0,2 (FPFH ~1,2 mm, o valor que funcionou); voxel de 6 mm nela falha.
+    """
+    try:
+        return min(1.0, max(0.1, float(os.environ.get("ALINHAR_ESCALA", "1"))))
+    except ValueError:
+        return 1.0
+
+
+def escala_auto(caminhos):
+    """clip(diagonal / 350 mm, 0,15, 1) com a maior diagonal (percentis 1-99) entre os scans."""
+    diag = 0.0
+    for c in caminhos:
+        P = np.load(c)[::10].astype(float)
+        if len(P) < 10:
+            continue
+        lo, hi = np.percentile(P, 1, axis=0), np.percentile(P, 99, axis=0)
+        diag = max(diag, float(np.linalg.norm(hi - lo)))
+    return float(np.clip(diag / 350.0, 0.15, 1.0)), diag
+
+
 def _par(args):
     """Registra o scan j no referencial do scan i. Devolve os melhores candidatos refinados."""
     i, j, ci, cj, sementes = args[:5]
     semente0 = args[5] if len(args) > 5 else 0
     Pi, Pj = np.load(ci), np.load(cj)
-    v0 = 6.0
+    esc = escala()
+    v0 = 6.0 * esc
+    escalas = [(v * esc, d * esc) for v, d in ESCALAS]
     a, b = _pcd(Pi, v0), _pcd(Pj, v0)
     feat = lambda p: reg.compute_fpfh_feature(p, o3d.geometry.KDTreeSearchParamHybrid(radius=v0 * 5, max_nn=150))
     fa, fb = feat(a), feat(b)
-    nuv = {v: (_pcd(Pi, v), _pcd(Pj, v)) for v, _ in ESCALAS}
+    nuv = {v: (_pcd(Pi, v), _pcd(Pj, v)) for v, _ in escalas}
     cands = []
     for s in range(semente0, semente0 + sementes):
         o3d.utility.random.seed(s)
@@ -94,17 +114,18 @@ def _par(args):
             [reg.CorrespondenceCheckerBasedOnEdgeLength(0.9), reg.CorrespondenceCheckerBasedOnDistance(v0 * 2.5)],
             reg.RANSACConvergenceCriteria(800_000, 0.999))
         T = r.transformation
-        for v, lim in ESCALAS:
+        for v, lim in escalas:
             pa, pb = nuv[v]
             ic = reg.registration_icp(pb, pa, lim, T, reg.TransformationEstimationPointToPlane(),
                                       reg.ICPConvergenceCriteria(max_iteration=60))
             T = ic.transformation
         if any(np.linalg.norm(np.linalg.inv(T) @ c["T"] - np.eye(4)) < 0.02 for c in cands):
             continue
-        # encaixe nos dois sentidos a 1 mm (o scan menor pode estar todo dentro do maior)
-        pa, pb = nuv[1.0]
-        e1 = reg.evaluate_registration(pb, pa, 1.0, T)
-        e2 = reg.evaluate_registration(pa, pb, 1.0, np.linalg.inv(T))
+        # encaixe nos dois sentidos a 1 mm x escala (o scan menor pode estar todo dentro do maior)
+        pa, pb = nuv[escalas[-1][0]]
+        tol_enc = max(0.3, esc)
+        e1 = reg.evaluate_registration(pb, pa, tol_enc, T)
+        e2 = reg.evaluate_registration(pa, pb, tol_enc, np.linalg.inv(T))
         cands.append(dict(T=T, fit_j_em_i=float(e1.fitness), fit_i_em_j=float(e2.fitness), rmse=float(e1.inlier_rmse),
                           n_corr=len(e1.correspondence_set)))
     cands.sort(key=lambda c: -max(c["fit_j_em_i"], c["fit_i_em_j"]))
@@ -268,7 +289,7 @@ def _pares_sobrepostos(scans, caminhos, T, ks, fit_min=0.12, max_por_scan=8):
     """Pre-selecao barata (nuvens de 4 mm): pares cuja sobreposicao ja e visivel com as poses atuais."""
     peq = {}
     for k in ks:
-        p = _pcd(np.load(caminhos[scans[k]]), 4.0, normais=False)
+        p = _pcd(np.load(caminhos[scans[k]]), 4.0 * escala(), normais=False)
         p.transform(T[k])
         peq[k] = p
     cand = []
@@ -276,7 +297,7 @@ def _pares_sobrepostos(scans, caminhos, T, ks, fit_min=0.12, max_por_scan=8):
         for j in ks[a + 1:]:
             d1 = np.asarray(peq[j].compute_point_cloud_distance(peq[i]))
             d2 = np.asarray(peq[i].compute_point_cloud_distance(peq[j]))
-            f = max(float((d1 < 6.0).mean()), float((d2 < 6.0).mean()))
+            f = max(float((d1 < 6.0 * escala()).mean()), float((d2 < 6.0 * escala()).mean()))
             if f >= fit_min:
                 cand.append((f, i, j))
     cand.sort(reverse=True)
@@ -353,14 +374,23 @@ def main():
     ap.add_argument("--scans", nargs="+")
     ap.add_argument("--ref")
     ap.add_argument("--ancoras", type=int, default=2)
+    ap.add_argument("--escala", default="auto",
+                    help="fator das grades grossas (1 = peca grande; auto = diagonal/350 mm entre 0,15 e 1)")
     a = ap.parse_args()
     proj = os.path.abspath(a.projeto)
     os.makedirs(a.saida, exist_ok=True)
     todos = sorted(os.listdir(os.path.join(proj, "data")))
     scans = a.scans or todos
-    os.environ.setdefault("OMP_NUM_THREADS", "12")
+    from recursos import orcamento_threads
+    orcamento_threads(4)
     print(f"{len(scans)} scans", flush=True)
     cam = nuvens(proj, scans, a.saida, jobs=4)
+    if a.escala == "auto":
+        esc, diag = escala_auto([cam[g] for g in scans])
+        print(f"escala automatica {esc:.2f} (diagonal da peca {diag:.0f} mm; FPFH {6 * esc:.2f} mm)", flush=True)
+    else:
+        esc = float(a.escala)
+    os.environ["ALINHAR_ESCALA"] = str(esc)
     ref, T, info = crescer(scans, caminhos=cam, ref=scans.index(a.ref) if a.ref else None, ancoras=a.ancoras,
                            cache=os.path.join(a.saida, "pares.json"))
     soltos = [scans[k] for k in range(len(scans)) if k not in T]

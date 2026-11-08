@@ -24,7 +24,11 @@ from scipy.spatial import cKDTree
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "revo_frames"))
 from revo_projeto import (RevoScan, segmentar_peca, adicionar_referencia_fuse, limpar_scan,
-                          gravar_revo, render_comparacao, ler_ply)
+                          gravar_revo, render_comparacao, ler_ply, carregar_exclusoes)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from recursos import orcamento_threads  # noqa: E402
+
+PARCIAIS = ("erro", "pulado", "revisar")   # estados que impedem aprovacao automatica (codigo de saida 2)
 
 ERRO_MAX_CALIB = 0.6   # mm; acima disso (e acima de ERRO_REL_MAX x espacamento do preview) o scan nao e limpo
 ERRO_REL_MAX = 1.25    # erro/espacamento do preview; ajuste perfeito ja da ~0,55, e preview esparso sobe o erro absoluto
@@ -35,7 +39,7 @@ def copiar_intacto(proj, saida, s):
     shutil.copytree(os.path.join(proj, "data", s), os.path.join(saida, "data", s))
 
 
-def processar(proj, s, saida, pixels=True, ilhas=True, periferia_mm=0.0, per_banda=2.5, per_alargue=20.0, sem_ply_antigos=False, ext_max_mm=0.0, min_mantido=MIN_MANTIDO, so_peca=False, pixel_tol=1.0, pixel_comp_min=30, pixel_adaptativo=False, precisao=False, temporal_passo=8, temporal_min=2):
+def processar(proj, s, saida, pixels=True, ilhas=True, periferia_mm=0.0, per_banda=2.5, per_alargue=20.0, sem_ply_antigos=False, ext_max_mm=0.0, min_mantido=MIN_MANTIDO, so_peca=False, pixel_tol=1.0, pixel_comp_min=30, pixel_adaptativo=False, precisao=False, temporal_passo=8, temporal_min=2, exclusoes=None):
     """Limpa um scan (roda num processo proprio). Devolve (id, relatorio, log).
 
     Qualquer scan que nao possa ser limpo com seguranca (sem raw_preview, calibracao ruim, limpeza
@@ -74,6 +78,9 @@ def processar(proj, s, saida, pixels=True, ilhas=True, periferia_mm=0.0, per_ban
                     return s, dict(status="pulado", erros=erros), _fechar(scan, proj, saida, s, log)
                 seg = segmentar_peca(scan, periferia_mm=periferia_mm, per_banda=per_banda, per_alargue=per_alargue, ext_max_mm=ext_max_mm, so_peca=so_peca, log=lambda *a: log.append(" ".join(map(str, a))))
                 seg = adicionar_referencia_fuse(scan, seg, log=lambda *a: log.append(" ".join(map(str, a))))
+                if exclusoes:
+                    seg["exclusoes"] = carregar_exclusoes(exclusoes, s)
+                    log.append(f"   exclusoes explicitas: {len(seg['exclusoes'])} regiao(oes) (prevalecem sobre fuse e evidencia temporal)")
                 r = limpar_scan(scan, seg, os.path.join(saida, "data", s), log=lambda *a: log.append(" ".join(map(str, a))),
                                 pixels=pixels, ilhas=ilhas, min_mantido=min_mantido, sem_ply_antigos=sem_ply_antigos, zerar_vazios=True,
                                 pixel_tol=pixel_tol, pixel_comp_min=pixel_comp_min, pixel_adaptativo=pixel_adaptativo or precisao,
@@ -121,6 +128,9 @@ def main():
     ap.add_argument("--temporal-passo", type=int, default=8, help="separacao entre quadros de evidencia (quatro vizinhos)")
     ap.add_argument("--temporal-min", type=int, choices=[2, 3, 4], default=2, help="minimo de quadros que observam espaco livre para confirmar descarte")
     ap.add_argument("--manter-ids", action="store_true", help="uso interno: adia novos IDs ate a uniao; nao importar junto ao original")
+    ap.add_argument("--exclusoes", help="JSON {guid|'*': [regioes]} de suportes/gabaritos a remover sempre (caixa, esfera, semiespaco, pontos)")
+    ap.add_argument("--permitir-parcial", action="store_true",
+                    help="sai com codigo 0 mesmo com scans erro/pulado/revisar (padrao: codigo 2 = resultado parcial)")
     a = ap.parse_args()
     if not np.isfinite(a.pixel_tol) or a.pixel_tol <= 0 or a.pixel_comp_min < 1 or a.jobs < 0:
         ap.error("pixel-tol deve ser positivo, pixel-comp-min >= 1 e jobs >= 0")
@@ -140,13 +150,19 @@ def main():
     scans = a.scans or todos
     if not scans or len(set(scans)) != len(scans) or not set(scans) <= set(todos):
         ap.error("selecao de scans vazia, duplicada ou desconhecida")
+    if a.exclusoes:
+        if not os.path.isfile(a.exclusoes):
+            ap.error(f"arquivo de exclusoes nao existe: {a.exclusoes}")
+        a.exclusoes = os.path.abspath(a.exclusoes)
+        for s in scans:   # valida o formato ANTES de gravar qualquer coisa
+            try:
+                carregar_exclusoes(a.exclusoes, s)
+            except (ValueError, KeyError, TypeError, OSError, IndexError) as e:
+                ap.error(f"exclusoes invalidas ({type(e).__name__}: {e})")
     os.makedirs(os.path.join(saida, "data"))
     # Orcamento total de ate 12 threads entre os processos.
-    jobs = min(a.jobs or min(len(scans), 4, os.cpu_count() or 1), 12)
-    os.environ["REVO_THREADS"] = str(max(1, min(12, os.cpu_count() or 1) // jobs))
-    for chave in ('OMP_NUM_THREADS', 'OPENBLAS_NUM_THREADS', 'MKL_NUM_THREADS'):
-        os.environ[chave] = os.environ['REVO_THREADS']
-    print(f"{len(scans)} scans, {jobs} em paralelo, {os.environ['REVO_THREADS']} threads cada", flush=True)
+    jobs, por_job = orcamento_threads(a.jobs or min(len(scans), 4))
+    print(f"{len(scans)} scans, {jobs} em paralelo, {por_job} threads cada", flush=True)
     rel = {}
     with ProcessPoolExecutor(jobs) as ex:
         for s, r, log in ex.map(processar, [proj] * len(scans), scans, [saida] * len(scans),
@@ -154,7 +170,8 @@ def main():
                                     [a.periferia_mm] * len(scans), [a.periferia_banda] * len(scans), [a.periferia_alargue] * len(scans),
                                     [a.sem_ply_antigos] * len(scans), [a.ext_max_mm] * len(scans), [a.min_mantido] * len(scans), [a.so_peca] * len(scans),
                                     [a.pixel_tol] * len(scans), [a.pixel_comp_min] * len(scans), [a.pixel_adaptativo] * len(scans),
-                                    [a.modo_limpeza == 'precisao'] * len(scans), [a.temporal_passo] * len(scans), [a.temporal_min] * len(scans)):
+                                    [a.modo_limpeza == 'precisao'] * len(scans), [a.temporal_passo] * len(scans), [a.temporal_min] * len(scans),
+                                    [a.exclusoes] * len(scans)):
             print("\n".join(log), flush=True)
             rel[s] = r
     for s in todos:   # scans fora de --scans vao sem alteracao
@@ -168,6 +185,14 @@ def main():
         from preparar_importacao import reidentificar
         reidentificar(os.path.join(saida, nome + '.revo'))
     print("saida:", saida)
+    parciais = {s: r.get("status") for s, r in rel.items() if r.get("status") in PARCIAIS}
+    if parciais:
+        print(f"RESULTADO PARCIAL: {len(parciais)} de {len(rel)} scan(s) NAO foram limpos (copiados intactos): "
+              + ", ".join(f"{s} [{st}]" for s, st in parciais.items())
+              + ". Ver relatorio_limpeza.json; ajustar as opcoes (ex.: --ext-max-mm/--so-peca/--min-mantido, triagem.py).",
+              flush=True)
+        if not a.permitir_parcial:
+            sys.exit(2)
 
 
 if __name__ == "__main__":

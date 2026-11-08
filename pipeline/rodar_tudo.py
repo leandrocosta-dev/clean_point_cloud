@@ -16,6 +16,7 @@ import subprocess
 import sys
 
 AQUI = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, AQUI)
 
 
 def main():
@@ -47,6 +48,14 @@ def main():
     ap.add_argument("--modo-limpeza", choices=["precisao", "classico"], default="precisao", help="precisao protege detalhes com evidencia entre quadros")
     ap.add_argument("--temporal-passo", type=int, default=8, help="separacao dos quadros de evidencia")
     ap.add_argument("--temporal-min", type=int, choices=[2, 3, 4], default=2, help="quadros necessarios para confirmar descarte")
+    ap.add_argument("--ext-max-mm", type=float, default=0.0, help="componentes maiores que X mm nunca sao a peca (placa de marcadores)")
+    ap.add_argument("--so-peca", action="store_true", help="so o componente escolhido (cena suja, peca isolada)")
+    ap.add_argument("--min-mantido", type=float, help="fracao minima mantida (padrao do limpar_raw: 0,30)")
+    ap.add_argument("--exclusoes", help="JSON de suportes/gabaritos a remover sempre (ver limpar_raw --exclusoes)")
+    ap.add_argument("--auto", action="store_true",
+                    help="roda triagem.py antes e usa as opcoes de limpeza que ela recomenda (as passadas aqui prevalecem)")
+    ap.add_argument("--permitir-parcial", action="store_true",
+                    help="segue para o Revo mesmo se algum scan nao foi limpo (erro/pulado/revisar)")
     a = ap.parse_args()
 
     if not a.so_limpar and not a.saida_ply:
@@ -55,20 +64,40 @@ def main():
     revo = [f for f in os.listdir(proj) if f.endswith(".revo")][0]
     saida = os.path.abspath(a.saida_limpo or os.path.join(os.path.dirname(proj), os.path.splitext(revo)[0] + "_limpo"))
 
+    if a.auto:
+        from triagem import triar
+        perfil = triar(proj, scans=a.unir or a.scans)
+        rec = perfil["recomendacao"]["limpar_raw"]
+        print(f"== triagem: {perfil['recomendacao']['caso']} -> opcoes de limpeza {rec}", flush=True)
+        padrao = ap.parse_args([a.projeto])
+        for k, v in rec.items():
+            if getattr(a, k, None) == getattr(padrao, k, None):     # o usuario nao mudou: usa a recomendacao
+                setattr(a, k, v)
+
     c1 = [sys.executable, os.path.join(AQUI, "limpar_raw.py"), proj, "--saida", saida, "--sem-ply-antigos",
           "--periferia-mm", str(a.periferia_mm), "--periferia-banda", str(a.periferia_banda),
           "--periferia-alargue", str(a.periferia_alargue), "--jobs", str(a.jobs)]
     c1 += ["--pixel-tol", str(a.pixel_tol), "--pixel-comp-min", str(a.pixel_comp_min),
            "--modo-limpeza", a.modo_limpeza, "--temporal-passo", str(a.temporal_passo),
-           "--temporal-min", str(a.temporal_min), "--manter-ids"]
-    if a.pixel_adaptativo:
-        c1.append("--pixel-adaptativo")
+           "--temporal-min", str(a.temporal_min), "--manter-ids", "--ext-max-mm", str(a.ext_max_mm)]
+    if a.min_mantido is not None:
+        c1 += ["--min-mantido", str(a.min_mantido)]
+    if a.exclusoes:
+        c1 += ["--exclusoes", os.path.abspath(a.exclusoes)]
+    for flag, on in (("--pixel-adaptativo", a.pixel_adaptativo), ("--so-peca", a.so_peca),
+                     ("--permitir-parcial", a.permitir_parcial)):
+        if on:
+            c1.append(flag)
     if a.unir:
         c1 += ["--scans", *a.unir]
     elif a.scans:
         c1 += ["--scans", *a.scans]
     print("== etapa 1: limpeza dos quadros", flush=True)
-    if subprocess.run(c1).returncode:
+    rc = subprocess.run(c1).returncode
+    if rc == 2:
+        sys.exit("limpeza PARCIAL (scans nao limpos, ver relatorio_limpeza.json); o Revo nao foi acionado. "
+                 "Ajuste as opcoes ou use --permitir-parcial.")
+    if rc:
         sys.exit("limpeza falhou; o Revo nao foi acionado")
 
     if a.unir:

@@ -4,12 +4,17 @@
 
 Com todos os scans no mesmo referencial (poses por segmento de `alinhar_direto.py`), cada pixel de cada quadro
 vira um ponto 3D comum e so fica se:
-  (a) pelo menos `--apoio-outros` OUTROS scans tem pontos no mesmo lugar (tolerancia ~1 mm): fantasmas, reflexos e
-      cenario que so um ou dois scans veem saem; e
-  (b) esta a ate `--raio` mm do NUCLEO da peca (pontos vistos por >= `--nucleo` scans): chapas, suportes e hastes
-      que ficam fixos em relacao a peca (e por isso passam em (a)) mas fora do casco saem.
-Quadros que ficam com menos de `--min-pontos` pontos sao apagados. As poses nao mudam; calibracao e
-raw_preview.ply sao os mesmos (a calibracao foi estimada com eles).
+  (a) pelo menos `--apoio-outros` OUTROS scans tem um ponto a ate `--tol` mm (distancia euclidiana real, metodo
+      padrao): fantasmas, reflexos e cenario que so um ou dois scans veem saem; e
+  (b) esta a ate `--raio` mm (euclidiano) do NUCLEO da peca (centroides vistos por >= `--nucleo` scans a `--tol`):
+      chapas, suportes e hastes fixos em relacao a peca (passam em (a)) mas fora do casco saem.
+Quadros que ficam com menos de `--min-pontos` pontos sao apagados. Poses, calibracao e raw_preview nao mudam.
+
+Portoes (o script PARA antes de gravar a entrega, com diagnostico): `--nucleo` maior que o numero de scans,
+`--apoio-outros` >= numero de scans, nucleo vazio. Scans que perderiam mais que `--perda-max` dos pontos sao
+gravados mas marcados REVISAR e o codigo de saida e 2 (resultado parcial, nao aprovar sem olhar).
+`--metodo voxel` reproduz a regra antiga (duas grades de 2 mm; casa ate 3,46 mm na diagonal; nucleo 26-conexo),
+agora com contagem de bits completa (ate 63 scans) e sem dilatacao quando --raio 0.
 O projeto de origem nunca e alterado; o destino nao pode existir.
 """
 import argparse
@@ -25,14 +30,21 @@ from concurrent.futures import ProcessPoolExecutor
 
 import numpy as np
 from scipy import ndimage
+from scipy.spatial import cKDTree
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "revo_frames"))
-from revo_projeto import RevoScan, SIG_SQL
-from alinhar_varios import baixa_prioridade
+AQUI = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, AQUI)
+sys.path.insert(0, os.path.join(AQUI, "revo_frames"))
+from revo_projeto import RevoScan  # noqa: E402
+from recursos import baixa_prioridade, orcamento_threads, threads_atuais  # noqa: E402
 
 VOX = 2.0
-OFF = np.array([[0.0, 0.0, 0.0], [1.0, 1.0, 1.0]])           # duas grades deslocadas de 1 mm: tolerancia ~1 mm
+OFF = np.array([[0.0, 0.0, 0.0], [1.0, 1.0, 1.0]])           # duas grades deslocadas de 1 mm (metodo voxel)
 POP = np.array([bin(i).count("1") for i in range(1 << 16)], dtype=np.uint8)
+
+
+class ConsensoInviavel(ValueError):
+    """Parametros ou dados que nao permitem consenso: nada deve ser gravado."""
 
 
 def chaves(P, o, mn):
@@ -41,10 +53,29 @@ def chaves(P, o, mn):
 
 
 def popcount(m):
-    return POP[m & 0xFFFF] + POP[(m >> 16) & 0xFFFF] + POP[(m >> 32) & 0xFFFF]
+    """Bits 1 em inteiros de 64 bits (antes contava so 48: scans 49+ sumiam da contagem)."""
+    m = np.asarray(m).astype(np.uint64)
+    if hasattr(np, "bitwise_count"):
+        return np.bitwise_count(m).astype(np.int64)
+    tot = np.zeros(m.shape, np.int64)
+    for s in (0, 16, 32, 48):
+        tot += POP[((m >> np.uint64(s)) & np.uint64(0xFFFF)).astype(np.int64)]
+    return tot
 
 
-def construir(pasta, segjson, scans, nucleo, raio, saida_npz, vox_nucleo=3.0):
+def validar(n_scans, nucleo, apoio_outros, metodo):
+    if n_scans < 2:
+        raise ConsensoInviavel(f"consenso exige >= 2 scans alinhados; ha {n_scans}")
+    if nucleo > n_scans:
+        raise ConsensoInviavel(f"--nucleo {nucleo} > {n_scans} scans: nenhum ponto pode formar o nucleo e TODA a peca "
+                               f"seria apagada. Use --nucleo <= {n_scans} (decisao de confianca: nao foi reduzido sozinho)")
+    if apoio_outros >= n_scans:
+        raise ConsensoInviavel(f"--apoio-outros {apoio_outros} exige mais scans do que os {n_scans - 1} outros disponiveis")
+    if metodo == "voxel" and n_scans > 63:
+        raise ConsensoInviavel("metodo voxel usa mascara de 64 bits: no maximo 63 scans (use --metodo euclidiano)")
+
+
+def nuvens_alinhadas(pasta, segjson, scans):
     ind = json.load(open(os.path.join(pasta, "segmentos_indice.json")))
     pj = json.load(open(segjson))["segmentos"]
     todos = []
@@ -54,15 +85,43 @@ def construir(pasta, segjson, scans, nucleo, raio, saida_npz, vox_nucleo=3.0):
             T = np.array(next(x for x in pj[g] if x["seg"] == s["seg"])["T"])
             C = np.load(s["arquivo"]).astype(np.float64)
             X.append(C @ T[:3, :3].T + T[:3, 3])
-        todos.append(np.vstack(X))
-    mn = np.vstack([x.min(0, keepdims=True) for x in todos]).min(0) - 40
+        todos.append(np.vstack(X) if X else np.empty((0, 3)))
+    return todos
+
+
+def contar_apoio(P, arvores, tol, ignorar=None, alvo=None, workers=1):
+    """Numero de scans (arvores) com ponto a <= tol de cada ponto. Com `alvo`, para de consultar os pontos
+    que ja atingiram o alvo (resultado identico para o teste cont >= alvo, bem mais rapido)."""
+    cont = np.zeros(len(P), np.int32)
+    ativos = np.arange(len(P))
+    for b, arv in enumerate(arvores):
+        if b == ignorar or arv is None or not len(ativos):
+            continue
+        d, _ = arv.query(P[ativos], distance_upper_bound=tol, workers=workers)
+        cont[ativos[np.isfinite(d)]] += 1
+        if alvo is not None:
+            ativos = ativos[cont[ativos] < alvo]
+    return cont
+
+
+def construir_euclidiano(todos, nucleo, tol, saida_npz, workers=4):
+    arv = [cKDTree(X) if len(X) else None for X in todos]
+    U = np.vstack([X for X in todos if len(X)])
+    cont = contar_apoio(U, arv, tol, alvo=nucleo, workers=workers)
+    N = U[cont >= nucleo]
+    np.savez(saida_npz, metodo="euclidiano", nucleo_pts=N, **{f"scan{b}": X for b, X in enumerate(todos)})
+    return dict(centroides=int(len(U)), nucleo=int(len(N)), fracao_nucleo=float(len(N) / max(1, len(U))))
+
+
+def construir_voxel(todos, nucleo, raio, saida_npz, vox_nucleo=3.0):
+    mn = np.vstack([x.min(0, keepdims=True) for x in todos if len(x)]).min(0) - 40
     out = dict(mn=mn)
     for gi, o in enumerate(OFF):
         ks, bs = [], []
         for bit, X in enumerate(todos):
             k = np.unique(chaves(X, o, mn))
             ks.append(k)
-            bs.append(np.full(len(k), 1 << bit, dtype=np.int64))
+            bs.append(np.full(len(k), np.uint64(1) << np.uint64(bit), dtype=np.uint64))
         k = np.concatenate(ks)
         b = np.concatenate(bs)
         ordem = np.argsort(k, kind="stable")
@@ -70,7 +129,6 @@ def construir(pasta, segjson, scans, nucleo, raio, saida_npz, vox_nucleo=3.0):
         u, ini = np.unique(k, return_index=True)
         out[f"u{gi}"] = u
         out[f"m{gi}"] = np.bitwise_or.reduceat(b, ini)
-    # nucleo: voxels vistos por >= `nucleo` scans, num grid de 3 mm, dilatado por `raio`
     u, m = out["u0"], out["m0"]
     forte = u[popcount(m) >= nucleo]
     kz = forte % 400031
@@ -82,28 +140,66 @@ def construir(pasta, segjson, scans, nucleo, raio, saida_npz, vox_nucleo=3.0):
     dims = np.ceil((np.vstack(todos).max(0) + 40 - lo) / vox_nucleo).astype(int) + 2
     G = np.zeros(dims, bool)
     idx = np.floor((cen - lo) / vox_nucleo).astype(int)
-    G[tuple(idx.T)] = True
-    G = ndimage.binary_dilation(G, structure=ndimage.generate_binary_structure(3, 3), iterations=max(1, int(round(raio / vox_nucleo))))
-    np.savez(saida_npz, mn=mn, u0=out["u0"], m0=out["m0"], u1=out["u1"], m1=out["m1"], lo=lo, vox_nucleo=vox_nucleo,
-             nucleo_shape=np.array(G.shape))
+    if len(idx):
+        G[tuple(idx.T)] = True
+    it = int(round(raio / vox_nucleo))
+    if it > 0:   # iterations=0 no scipy repete ate encher o volume
+        G = ndimage.binary_dilation(G, structure=ndimage.generate_binary_structure(3, 3), iterations=it)
+    np.savez(saida_npz, metodo="voxel", mn=mn, u0=out["u0"], m0=out["m0"], u1=out["u1"], m1=out["m1"], lo=lo,
+             vox_nucleo=vox_nucleo, nucleo_shape=np.array(G.shape))
     np.save(saida_npz + ".nucleo.npy", np.packbits(G.ravel()))
-    return len(scans), int(G.sum()), G.shape
+    return dict(nucleo=int(len(forte)), voxels_nucleo_dilatado=int(G.sum()))
 
 
-def _carregar(saida_npz):
-    z = np.load(saida_npz)
-    shp = tuple(z["nucleo_shape"])
-    G = np.unpackbits(np.load(saida_npz + ".nucleo.npy"))[: int(np.prod(shp))].astype(bool).reshape(shp)
-    return z, G
+class Decisor:
+    """Decide ok/nao para pontos ja no referencial comum (carregado uma vez por processo)."""
+
+    def __init__(self, npz, bit, apoio_outros, tol, raio):
+        z = np.load(npz)
+        self.metodo = str(z["metodo"])
+        self.bit, self.apoio, self.tol, self.raio = bit, apoio_outros, tol, raio
+        self.w = threads_atuais()
+        if self.metodo == "euclidiano":
+            n = len([k for k in z.files if k.startswith("scan")])
+            self.arv = [cKDTree(z[f"scan{b}"]) if len(z[f"scan{b}"]) else None for b in range(n)]
+            N = z["nucleo_pts"]
+            self.arv_nucleo = cKDTree(N) if len(N) else None
+        else:
+            shp = tuple(z["nucleo_shape"])
+            self.G = np.unpackbits(np.load(npz + ".nucleo.npy"))[: int(np.prod(shp))].astype(bool).reshape(shp)
+            self.mn, self.lo, self.vn = z["mn"], z["lo"], float(z["vox_nucleo"])
+            self.masc = [(z["u0"], z["m0"]), (z["u1"], z["m1"])]
+
+    def __call__(self, Pg):
+        if self.metodo == "euclidiano":
+            if self.arv_nucleo is None:
+                return np.zeros(len(Pg), bool)
+            d, _ = self.arv_nucleo.query(Pg, distance_upper_bound=self.raio, workers=self.w)
+            ok = np.isfinite(d)
+            if ok.any():
+                idx = np.flatnonzero(ok)
+                c = contar_apoio(Pg[idx], self.arv, self.tol, ignorar=self.bit, alvo=self.apoio, workers=self.w)
+                ok[idx] = c >= self.apoio
+            return ok
+        outros = ~(np.uint64(1) << np.uint64(self.bit))
+        sup = np.zeros(len(Pg), dtype=np.uint64)
+        for o, (u, mk) in zip(OFF, self.masc):
+            kk = chaves(Pg, o, self.mn)
+            j = np.searchsorted(u, kk)
+            j[j >= len(u)] = len(u) - 1
+            sup |= np.where(u[j] == kk, mk[j], np.uint64(0))
+        ok = popcount(sup & outros) >= self.apoio
+        v = np.floor((Pg - self.lo) / self.vn).astype(int)
+        dentro = np.all((v >= 0) & (v < np.array(self.G.shape)), axis=1)
+        perto = np.zeros(len(Pg), bool)
+        perto[dentro] = self.G[tuple(v[dentro].T)]
+        return ok & perto
 
 
 def _limpar_scan(args):
-    proj, destino, g, bit, segs, npz, apoio_outros, min_pontos = args
+    proj, destino, g, bit, segs, npz, apoio_outros, min_pontos, tol, raio = args
     baixa_prioridade()
-    z, G = _carregar(npz)
-    mn, lo, vn = z["mn"], z["lo"], float(z["vox_nucleo"])
-    masc = [(z["u0"], z["m0"]), (z["u1"], z["m1"])]
-    outros = ~np.int64(1 << bit)
+    decide = Decisor(npz, bit, apoio_outros, tol, raio)
     stats = dict(scan=g, antes=0, depois=0, quadros=0, apagados=0)
     with tempfile.TemporaryDirectory() as tmp:
         scan = RevoScan(os.path.join(proj, "data", g), tmp)
@@ -124,18 +220,7 @@ def _limpar_scan(args):
                 w, h, mask, zz, quatro = scan.profundidade(i)
                 P, pix = scan.pontos(k)
                 Pg = P @ T[:3, :3].T + T[:3, 3]
-                sup = np.zeros(len(Pg), dtype=np.int64)
-                for o, (u, mk) in zip(OFF, masc):
-                    kk = chaves(Pg, o, mn)
-                    j = np.searchsorted(u, kk)
-                    j[j >= len(u)] = len(u) - 1
-                    sup |= np.where(u[j] == kk, mk[j], 0)
-                ok = popcount(sup & outros) >= apoio_outros
-                v = np.floor((Pg - lo) / vn).astype(int)
-                dentro = np.all((v >= 0) & (v < np.array(G.shape)), axis=1)
-                perto = np.zeros(len(Pg), bool)
-                perto[dentro] = G[tuple(v[dentro].T)]
-                ok &= perto
+                ok = decide(Pg)
                 stats["quadros"] += 1
                 stats["antes"] += len(pix)
                 if ok.sum() < min_pontos:
@@ -172,42 +257,78 @@ def main():
     ap.add_argument("--saida", required=True)
     ap.add_argument("--apoio-outros", type=int, default=2)
     ap.add_argument("--nucleo", type=int, default=6)
-    ap.add_argument("--raio", type=float, default=15.0)
+    ap.add_argument("--raio", type=float, default=15.0, help="distancia maxima ao nucleo (mm, euclidiana)")
+    ap.add_argument("--tol", type=float, default=1.0, help="distancia de apoio entre scans (mm, euclidiana)")
+    ap.add_argument("--metodo", choices=["euclidiano", "voxel"], default="euclidiano")
     ap.add_argument("--min-pontos", type=int, default=1500)
+    ap.add_argument("--perda-max", type=float, default=0.6, help="fracao maxima removida por scan antes de marcar REVISAR")
     ap.add_argument("--jobs", type=int, default=4)
     a = ap.parse_args()
+    if a.tol <= 0 or a.raio < 0 or a.apoio_outros < 1 or a.nucleo < 1 or not 0 < a.perda_max <= 1:
+        ap.error("tol > 0, raio >= 0, apoio-outros >= 1, nucleo >= 1 e 0 < perda-max <= 1")
     baixa_prioridade()
     proj, saida = os.path.abspath(a.projeto), os.path.abspath(a.saida)
     if os.path.exists(saida) and (not os.path.isdir(saida) or os.listdir(saida)):   # pasta vazia pode ser reaproveitada
         sys.exit(f"destino ja existe: {saida}")
     pj = json.load(open(a.segmentos))
     scans = sorted(g for g in json.load(open(os.path.join(a.pasta_segmentos, "segmentos_indice.json"))) if g in pj["segmentos"])
-    os.environ["OMP_NUM_THREADS"] = "3"
-    os.environ.setdefault("REVO_THREADS", "3")
+    try:
+        validar(len(scans), a.nucleo, a.apoio_outros, a.metodo)
+    except ConsensoInviavel as e:
+        sys.exit(f"CONSENSO INVIAVEL: {e}")
+    jobs, por_job = orcamento_threads(min(a.jobs, len(scans)))
     t0 = time.time()
-    # copia tudo menos o dataset (que e reescrito por scan)
+    tmp_npz = tempfile.mkdtemp(prefix="consenso_")
+    npz = os.path.join(tmp_npz, "consenso.npz")
+    todos = nuvens_alinhadas(a.pasta_segmentos, a.segmentos, scans)
+    if a.metodo == "euclidiano":
+        info = construir_euclidiano(todos, a.nucleo, a.tol, npz, workers=jobs * por_job)
+        vazio = info["nucleo"] == 0
+    else:
+        info = construir_voxel(todos, a.nucleo, a.raio, npz)
+        vazio = info["nucleo"] == 0
+    print(f"consenso de {len(scans)} scans ({a.metodo}); {info} ({time.time()-t0:.0f}s)", flush=True)
+    if vazio:
+        shutil.rmtree(tmp_npz, ignore_errors=True)
+        sys.exit(f"CONSENSO INVIAVEL: nucleo vazio (nenhum ponto visto por >= {a.nucleo} scans a {a.tol:g} mm). "
+                 "Sem sobreposicao suficiente ou poses erradas: conferir alinhamento antes de limpar. Nada foi gravado.")
+    os.makedirs(saida, exist_ok=True)
     for g in os.listdir(os.path.join(proj, "data")):
         shutil.copytree(os.path.join(proj, "data", g), os.path.join(saida, "data", g), ignore=shutil.ignore_patterns("frames.dataset"))
     for f in os.listdir(proj):
         if os.path.isfile(os.path.join(proj, f)):
             shutil.copy2(os.path.join(proj, f), os.path.join(saida, f))
+    shutil.copy2(npz, os.path.join(saida, "consenso.npz"))
+    if os.path.exists(npz + ".nucleo.npy"):
+        shutil.copy2(npz + ".nucleo.npy", os.path.join(saida, "consenso.npz.nucleo.npy"))
     npz = os.path.join(saida, "consenso.npz")
-    n, nvox, shp = construir(a.pasta_segmentos, a.segmentos, scans, a.nucleo, a.raio, npz)
-    print(f"consenso de {n} scans; nucleo (>= {a.nucleo} scans) dilatado {a.raio:g} mm: {nvox:,} voxels de 3 mm em grade {shp} ({time.time()-t0:.0f}s)", flush=True)
-    tarefas = [(proj, saida, g, scans.index(g), pj["segmentos"][g], npz, a.apoio_outros, a.min_pontos) for g in scans]
-    rel = []
-    with ProcessPoolExecutor(a.jobs) as ex:
+    shutil.rmtree(tmp_npz, ignore_errors=True)
+    tarefas = [(proj, saida, g, scans.index(g), pj["segmentos"][g], npz, a.apoio_outros, a.min_pontos, a.tol, a.raio)
+               for g in scans]
+    rel, revisar = [], []
+    with ProcessPoolExecutor(jobs) as ex:
         for st in ex.map(_limpar_scan, tarefas):
+            frac = st["depois"] / max(1, st["antes"])
+            st["status"] = "limpo" if frac >= 1 - a.perda_max and st.get("integridade") == "ok" else "revisar"
+            if st["status"] == "revisar":
+                revisar.append(st["scan"])
             rel.append(st)
-            print(f"  {st['scan']}: {st['antes']:,} -> {st['depois']:,} pontos ({st['depois']/max(1,st['antes'])*100:.0f}% mantidos), "
-                  f"{st['apagados']} de {st['quadros']} quadros apagados, integridade {st.get('integridade')}", flush=True)
+            print(f"  {st['scan']}: {st['antes']:,} -> {st['depois']:,} pontos ({frac*100:.0f}% mantidos), "
+                  f"{st['apagados']} de {st['quadros']} quadros apagados, integridade {st.get('integridade')}"
+                  + ("  << REVISAR" if st["status"] == "revisar" else ""), flush=True)
     for g in os.listdir(os.path.join(proj, "data")):          # scans fora do consenso (ex.: outra calibracao) vao como estavam
         if g not in scans and not os.path.exists(os.path.join(saida, "data", g, "cache", "frames.dataset")):
             os.makedirs(os.path.join(saida, "data", g, "cache"), exist_ok=True)
             shutil.copy2(os.path.join(proj, "data", g, "cache", "frames.dataset"), os.path.join(saida, "data", g, "cache", "frames.dataset"))
-    json.dump(dict(parametros=vars(a), scans=rel), open(os.path.join(saida, "limpeza_consenso.json"), "w"), indent=1)
+    json.dump(dict(parametros=vars(a), nucleo=info, scans=rel, revisar=revisar,
+                   estado="parcial" if revisar else "completo"),
+              open(os.path.join(saida, "limpeza_consenso.json"), "w"), indent=1)
     tot_a, tot_d = sum(s["antes"] for s in rel), sum(s["depois"] for s in rel)
-    print(f"total: {tot_a:,} -> {tot_d:,} pontos ({tot_d/tot_a*100:.0f}% mantidos) em {time.time()-t0:.0f}s")
+    print(f"total: {tot_a:,} -> {tot_d:,} pontos ({tot_d/max(1,tot_a)*100:.0f}% mantidos) em {time.time()-t0:.0f}s")
+    if revisar:
+        print(f"RESULTADO PARCIAL: {len(revisar)} scan(s) perderam mais de {a.perda_max*100:.0f}% ou falharam na "
+              f"integridade: {revisar}. Nao aprovar sem inspecao.", flush=True)
+        sys.exit(2)
 
 
 if __name__ == "__main__":

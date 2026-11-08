@@ -33,7 +33,12 @@ SIG_REVO = b"RPAlgo_file_sys\x00"
 SIG_SQL = b"SQLite format 3\x00"
 MAX_VOXELS = 3e8          # voxels da grade da peca (bool + rotulos int32 = ~5 bytes cada)
 MAX_VOXELS_TRANS = 1e8    # grade dos transitorios (2 float32 + filtros)
-THREADS = int(os.environ.get("REVO_THREADS", "-1"))   # threads por consulta de KD-tree (-1 = todas)
+_CPUS = os.cpu_count() or 1
+# threads por consulta de KD-tree: REVO_THREADS (definido por recursos.orcamento_threads); sem ele, todos os
+# processadores (modo maximo) ou 12 (REVO_RECURSOS=conservador, guia secao 8)
+_TETO = 12 if os.environ.get("REVO_RECURSOS", "maximo").lower() == "conservador" else _CPUS
+THREADS = int(os.environ.get("REVO_THREADS", str(_TETO)))
+THREADS = _TETO if THREADS <= 0 else min(THREADS, _CPUS)
 K_PADRAO = (1140.4, 1141.0, 232.8, 319.5)   # modo usado nos scans de teste
 
 
@@ -545,7 +550,66 @@ def mascara_manter(P, seg):
             kill = np.zeros(len(P), bool)
             kill[np.flatnonzero(faixa)] = dd > per["mm"]
             ok &= ~kill
+    # Exclusoes identificadas (suportes, gabaritos, fixadores) valem POR ULTIMO: prevalecem sobre a recuperacao
+    # pelo fuse.ply, a pegada/coluna e, no modo precisao, sobre a evidencia temporal (final = base & ~rejeitar).
+    if seg.get("exclusoes"):
+        ok &= ~dentro_exclusoes(P, seg["exclusoes"])
     return ok
+
+
+def carregar_exclusoes(caminho, scan):
+    """Le exclusoes de um JSON {guid|"*": [regioes]} no referencial do mundo do scan (o do raw_preview).
+
+    Regioes: {"tipo": "caixa", "min": [x,y,z], "max": [x,y,z]} | {"tipo": "esfera", "centro": [..], "raio": r}
+    | {"tipo": "semiespaco", "normal": [..], "d": d}  (remove n.p + d > 0)
+    | {"tipo": "pontos", "arquivo": "suporte.ply|.npy", "raio": r}  (remove a <= r de qualquer ponto do arquivo).
+    """
+    with open(caminho, encoding="utf-8") as f:
+        dados = json.load(f)
+    regioes = list(dados.get("*", [])) + list(dados.get(scan, []))
+    base = os.path.dirname(os.path.abspath(caminho))
+    out = []
+    for r in regioes:
+        r = dict(r)
+        t = r.get("tipo")
+        if t == "pontos":
+            arq = r["arquivo"] if os.path.isabs(r["arquivo"]) else os.path.join(base, r["arquivo"])
+            X = np.load(arq)[:, :3] if arq.endswith(".npy") else ler_ply(arq)[1][:, :3]
+            r["arvore"] = cKDTree(np.asarray(X, float))
+        elif t not in ("caixa", "esfera", "semiespaco"):
+            raise ValueError(f"exclusao com tipo desconhecido: {t!r}")
+        # campos obrigatorios validados aqui (antes de gravar), nao no meio da limpeza de cada scan
+        campos = {"caixa": (("min", 3), ("max", 3)), "esfera": (("centro", 3), ("raio", 1)),
+                  "semiespaco": (("normal", 3), ("d", 1)), "pontos": (("raio", 1),)}[t]
+        for nome, n in campos:
+            v = np.atleast_1d(np.asarray(r[nome], float))
+            if v.shape != (n,) or not np.all(np.isfinite(v)):
+                raise ValueError(f"exclusao {t}: campo {nome!r} deve ter {n} numero(s) finito(s)")
+        if t == "caixa" and np.any(np.asarray(r["min"], float) > np.asarray(r["max"], float)):
+            raise ValueError("exclusao caixa: min > max")
+        if t in ("esfera", "pontos") and float(r["raio"]) <= 0:
+            raise ValueError(f"exclusao {t}: raio deve ser > 0")
+        if t == "semiespaco" and np.linalg.norm(np.asarray(r["normal"], float)) < 1e-9:
+            raise ValueError("exclusao semiespaco: normal nula")
+        out.append(r)
+    return out
+
+
+def dentro_exclusoes(P, regioes):
+    """True para os pontos dentro de qualquer regiao de exclusao."""
+    fora = np.zeros(len(P), bool)
+    for r in regioes:
+        t = r["tipo"]
+        if t == "caixa":
+            fora |= np.all((P >= np.asarray(r["min"])) & (P <= np.asarray(r["max"])), axis=1)
+        elif t == "esfera":
+            fora |= np.linalg.norm(P - np.asarray(r["centro"]), axis=1) <= float(r["raio"])
+        elif t == "semiespaco":
+            fora |= P @ np.asarray(r["normal"], float) + float(r["d"]) > 0
+        elif t == "pontos":
+            d, _ = r["arvore"].query(P, distance_upper_bound=float(r["raio"]), workers=THREADS)
+            fora |= np.isfinite(d)
+    return fora
 
 
 def _em_transitorio(P, trans):
@@ -898,7 +962,9 @@ def limpar_scan(scan, seg, destino_scan, log=print, pixels=True, ilhas=True, min
     # raw_preview filtrado pela mesma regra (esta no referencial do mundo)
     hdr, prev = ler_ply(os.path.join(scan.pasta, "raw_preview.ply"))
     okp = mascara_manter(prev[:, :3].astype(float), seg)
-    if ilh is not None:
+    # No modo precisao as ilhas sao so CANDIDATAS (a evidencia temporal decide nos quadros); tirar do preview
+    # mostraria ausencia onde os quadros ainda tem o dado. Classico: preview segue a mesma regra dos quadros.
+    if ilh is not None and not precisao:
         okp &= mascara_ilhas(prev[:, :3].astype(float), ilh)
     gravar_ply(os.path.join(destino_scan, "raw_preview.ply"), hdr, prev[okp])
     seg['_mascaras_finais'] = oks
