@@ -1,0 +1,63 @@
+[build-system]
+requires = ["setuptools>=70"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "clean-point-cloud"
+version = "0.1.0"
+description = "Limpa quadros de scans do Revo Scan 6, alinha scans e funde nuvens (GPU obrigatoria via CuPy)."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "numpy==2.5.4",
+    "scipy==1.18.1",
+    "open3d==0.20.0",
+    "matplotlib==3.11.2",
+    "pillow==13.0.0",
+    "psutil==7.2.2",
+    "plotly==7.1.0",
+    "meshlib==3.1.4.297",
+    "scikit-learn==1.9.1",
+    "pywinauto==0.6.9",
+    "comtypes==1.4.17",
+    "pywin32==312",
+    "PySide6_Essentials==6.12.0",
+    # GPU e obrigatoria (ver pipeline/gpu.py); runtime CUDA vem por pip.
+    "cupy-cuda12x[ctk]==14.2.0",
+    "cuda-toolkit==12.9.2.0",
+]
+
+[project.optional-dependencies]
+dev = ["ruff"]
+
+# Os scripts nao formam um pacote: setup.py instala so um .pth com pipeline/ e pipeline/revo_frames/.
+[tool.setuptools]
+py-modules = []
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+extend-exclude = ["pipeline/legado", "pipeline/output", "aprendizado/cache", "gui/estado"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B"]
+ignore = [
+    "E401",   # varios imports na mesma linha (estilo atual)
+    "E402",   # import depois de sys.path.insert (scripts; fase 3 remove)
+    "E701",   # if x: y numa linha
+    "E702",   # ponto e virgula
+    "E703",
+    "E731",   # lambda atribuida
+    "E741",   # nomes l, O, I (matematica: l, I)
+    "B007",   # variavel de laco nao usada
+    "B008",
+    "B905",   # zip sem strict=
+    "B904",   # raise sem from
+    "B006",
+    "B023",
+    "I001",   # ordem de imports: o repo nao segue isort ainda (fase 3)
+    "E501",   # 750+ linhas longas legadas; o limite de 120 vale para codigo novo (fase 3 reformata)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["E501"]

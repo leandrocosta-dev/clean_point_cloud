@@ -20,6 +20,7 @@ Historico detalhado, numeros e erros em `diario/DIARIO.md`; este guia e a receit
    sem confirmacao, sem precisar das fusoes do Revo. Pose com erro > --tol (0,5 mm) gera contradicao falsa: alinhar antes.
 8. Peca pequena com detalhe fino: `fundir_nitido.py ... --motor cuda` (P7: 78 s x 446 s na CPU; GPU x CPU mediana 3,4 um).
 7. Inspecao 3D: `consulta3d.py` (caixa/esfera/corte/componentes/comparar/vista HTML/cobertura_inspecao com registro do que ja foi visto).
+9. GPU obrigatoria: `pipeline/gpu.py` (`xp()`, `knn`, `vizinho_mais_proximo`, `contar_no_raio`, `normais_pca`, `remover_soltos`, `reduzir_voxel`/`agrupar`/`chaves_voxel`, `ransac_plano`, `icp_ponto_plano`, `componentes_conexos_voxel`, `blocos`; entrada numpy ou cupy, saida no mesmo lado; sem CUDA levanta `ErroGPU`). `REVO_PERMITIR_CPU=1` so para depuracao/referencia na CPU. Utilitarios comuns em `pipeline/comum.py` (`sha256`, `ler_ply`/`gravar_ply`, `salvar_json_atomico`, `configurar_log`, `destino_novo`). Uma vez por maquina/venv: `.\.venv\Scripts\python.exe -m pip install -e .` (poe `pipeline/` e `pipeline/revo_frames/` no `sys.path`: `import gpu`, `import revo_projeto` de qualquer pasta; `python pipeline/x.py` continua igual).
 
 ## 0. Regras do usuario (nao quebrar)
 - NAO fechar furos por padrao (2026-11-02): nenhuma etapa fecha furos sozinha (Hole Filling do Revo = `--furos`, MeshLib = `malha_meshlib --furo-max N`, padrao 0). So aplicar se o usuario pedir.

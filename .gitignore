@@ -20,3 +20,6 @@ aprendizado/cache/
 
 # Estado local da GUI (contexto, fila, historico, presets)
 gui/estado/
+
+# Instalacao editavel (pip install -e .)
+*.egg-info/
