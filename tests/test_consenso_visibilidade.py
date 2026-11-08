@@ -1,12 +1,11 @@
 """Consenso por visibilidade: espaco livre remove, falta de cobertura e oclusao preservam."""
-from pathlib import Path
-import sys
+
 import unittest
 
 import numpy as np
+from consenso_visibilidade import Vista, avaliar_candidatos, chaves_voxel, decidir
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'pipeline'))
-from consenso_visibilidade import Vista, avaliar_candidatos, decidir, chaves_voxel  # noqa: E402
+from tests.gpu_utils import CUDA_DISPONIVEL
 
 K = (200.0, 200.0, 100.0, 100.0)
 
@@ -21,6 +20,7 @@ def camera(x, y, altura=100.0, plano=0.0, buraco=None):
     return T, D
 
 
+@unittest.skipUnless(CUDA_DISPONIVEL, "CUDA/CuPy ausente")
 class VisibilidadeTest(unittest.TestCase):
     def vistas(self, buraco=None):
         out = []
@@ -29,12 +29,16 @@ class VisibilidadeTest(unittest.TestCase):
                 T, D = camera(x, 0.0, buraco=buraco)
                 out.append(Vista(D, K, T, scan))
         T, D = camera(0.0, 0.0)
-        out.append(Vista(D, K, T, "A"))      # vista do proprio scan nunca vota
+        out.append(Vista(D, K, T, "A"))  # vista do proprio scan nunca vota
         return out
 
     def test_fiapo_atravessado_e_removido_superficie_confirmada(self):
-        C = np.array([[0.0, 0.0, 20.0],      # fiapo flutuando: B e C veem o plano atras dele
-                      [1.0, 1.0, 0.0]])      # superficie real: B e C confirmam
+        C = np.array(
+            [
+                [0.0, 0.0, 20.0],  # fiapo flutuando: B e C veem o plano atras dele
+                [1.0, 1.0, 0.0],
+            ]
+        )  # superficie real: B e C confirmam
         v = avaliar_candidatos(C, "A", self.vistas(), tol=0.5, min_livre_quadros=2)
         self.assertEqual(v["outros_scans"], 2)
         np.testing.assert_array_equal(v["contradizem"], [2, 0])
@@ -42,13 +46,13 @@ class VisibilidadeTest(unittest.TestCase):
         np.testing.assert_array_equal(decidir(v, 2), [1, 2])
 
     def test_sem_cobertura_fica_inconclusivo(self):
-        C = np.array([[500.0, 0.0, 0.0]])    # fora do campo de visao dos outros scans
+        C = np.array([[500.0, 0.0, 0.0]])  # fora do campo de visao dos outros scans
         v = avaliar_candidatos(C, "A", self.vistas())
         self.assertEqual(int(v["cobrem"][0]), 0)
         self.assertEqual(int(decidir(v, 1)[0]), 0)
 
     def test_oclusao_fica_inconclusiva(self):
-        C = np.array([[0.0, 0.0, -10.0]])    # atras do plano visto pelos outros: ocluido, nao livre
+        C = np.array([[0.0, 0.0, -10.0]])  # atras do plano visto pelos outros: ocluido, nao livre
         v = avaliar_candidatos(C, "A", self.vistas())
         self.assertEqual(int(v["contradizem"][0]), 0)
         self.assertEqual(int(v["confirmam"][0]), 0)
@@ -74,13 +78,9 @@ class VisibilidadeTest(unittest.TestCase):
         self.assertEqual(k[1], k[2])
 
     def test_cuda_corresponde_cpu(self):
-        try:
-            import cupy as cp
-            if cp.cuda.runtime.getDeviceCount() < 1:
-                raise RuntimeError
-        except Exception:
-            self.skipTest("CUDA indisponivel")
+        import cupy as cp
         from consenso_visibilidade import _para_xp
+
         rng = np.random.default_rng(0)
         C = np.c_[rng.uniform(-20, 20, (500, 2)), rng.uniform(-5, 30, 500)]
         a = avaliar_candidatos(C, "A", self.vistas())

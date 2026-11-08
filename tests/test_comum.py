@@ -1,22 +1,24 @@
 """Utilitarios comuns: sha256, PLY, JSON atomico, log, destino novo, e importacao das pastas do pipeline."""
+
 import hashlib
 import json
 import logging
 import os
-from pathlib import Path
 import subprocess
 import sys
 import tempfile
 import unittest
+from pathlib import Path
 
 import numpy as np
 
 RAIZ = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(RAIZ / 'pipeline'))
-import comum  # noqa: E402
+import comum
 
-CAB = ("ply\nformat binary_little_endian 1.0\nelement vertex 3\nproperty float x\nproperty float y\n"
-       "property float z\nend_header\n")
+CAB = (
+    "ply\nformat binary_little_endian 1.0\nelement vertex 3\nproperty float x\nproperty float y\n"
+    "property float z\nend_header\n"
+)
 
 
 class ComumTest(unittest.TestCase):
@@ -43,8 +45,8 @@ class ComumTest(unittest.TestCase):
         np.testing.assert_array_equal(lido2, pts[:2])
 
     def test_ply_compativel_com_revo_projeto(self):
-        sys.path.insert(0, str(RAIZ / 'pipeline' / 'revo_frames'))
         import revo_projeto as R
+
         pts = np.random.default_rng(0).standard_normal((50, 3)).astype(np.float32)
         a, b = self.dir / "a.ply", self.dir / "b.ply"
         comum.gravar_ply(a, CAB, pts)
@@ -59,13 +61,13 @@ class ComumTest(unittest.TestCase):
         self.assertEqual((r["n"], r["v"], r["t"]), (3, [0, 1, 2], "acentuação"))
         with self.assertRaises(TypeError):
             comum.salvar_json_atomico(p, {"x": object()})
-        self.assertEqual(json.loads(p.read_text(encoding="utf-8"))["n"], 3)      # original intacto
-        self.assertEqual([f.name for f in p.parent.iterdir()], ["r.json"])        # sem .tmp sobrando
+        self.assertEqual(json.loads(p.read_text(encoding="utf-8"))["n"], 3)  # original intacto
+        self.assertEqual([f.name for f in p.parent.iterdir()], ["r.json"])  # sem .tmp sobrando
 
     def test_destino_novo(self):
         novo = comum.destino_novo(self.dir / "a" / "b")
         self.assertTrue(novo.is_dir())
-        comum.destino_novo(novo)                                                   # vazia: reaproveita
+        comum.destino_novo(novo)  # vazia: reaproveita
         (novo / "x.txt").write_text("1")
         with self.assertRaises(SystemExit) as e:
             comum.destino_novo(novo)
@@ -93,15 +95,17 @@ class InstalacaoEditavelTest(unittest.TestCase):
 
     def _rodar(self, codigo, cwd):
         env = {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}
-        return subprocess.run([sys.executable, "-I", "-c", codigo], cwd=cwd, env=env, capture_output=True,
-                              text=True, timeout=120)
+        return subprocess.run(
+            [sys.executable, "-I", "-c", codigo], cwd=cwd, env=env, capture_output=True, text=True, timeout=120
+        )
 
     def test_importa_de_outra_pasta(self):
         with tempfile.TemporaryDirectory() as d:
-            r = self._rodar("import recursos, revo_projeto, comum, vizinhos_gpu; "
-                            "print(recursos.__file__); print(revo_projeto.__file__)", d)
-        if r.returncode != 0 and "ModuleNotFoundError" in r.stderr:
-            self.skipTest("pacote nao instalado: rode  python -m pip install -e .")
+            r = self._rodar(
+                "import recursos, revo_projeto, comum, vizinhos_gpu; "
+                "print(recursos.__file__); print(revo_projeto.__file__)",
+                d,
+            )
         self.assertEqual(r.returncode, 0, r.stderr)
         linhas = r.stdout.split("\n")
         self.assertTrue(Path(linhas[0]).samefile(RAIZ / "pipeline" / "recursos.py"))
@@ -109,8 +113,13 @@ class InstalacaoEditavelTest(unittest.TestCase):
 
     def test_script_roda_como_python_pipeline_x_py_de_outra_pasta(self):
         with tempfile.TemporaryDirectory() as d:
-            r = subprocess.run([sys.executable, str(RAIZ / "pipeline" / "recursos.py")], cwd=d,
-                               capture_output=True, text=True, timeout=120)
+            r = subprocess.run(
+                [sys.executable, str(RAIZ / "pipeline" / "recursos.py")],
+                cwd=d,
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
         self.assertEqual(r.returncode, 0, r.stderr)
 
 

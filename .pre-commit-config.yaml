@@ -1,0 +1,24 @@
+repos:
+  # Repositorio Windows: usar a mesma .venv dos scripts, mesmo sem Activate.ps1.
+  - repo: local
+    hooks:
+      - id: ruff-check
+        name: ruff check
+        entry: .venv/Scripts/python.exe -m ruff check --force-exclude
+        language: system
+        types: [python]
+        files: '^(?:(?:pipeline|gui|tests|scripts)/.*\.py$|setup\.py$)'
+        require_serial: true
+      - id: ruff-format
+        name: ruff format check
+        entry: .venv/Scripts/python.exe -m ruff format --check --force-exclude
+        language: system
+        types: [python]
+        files: '^(?:(?:pipeline|gui|tests|scripts)/.*\.py$|setup\.py$)'
+        require_serial: true
+      - id: testes-comuns
+        name: testes dos utilitarios comuns
+        entry: .venv/Scripts/python.exe scripts/testes_sem_gpu.py
+        language: system
+        pass_filenames: false
+        always_run: true

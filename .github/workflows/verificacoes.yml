@@ -1,0 +1,26 @@
+name: Verificacoes sem GPU
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  utilitarios:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Instalar dependencias dos testes sem GPU
+        run: |
+          python -m pip install --upgrade pip setuptools wheel
+          python -m pip install numpy==2.5.4 scipy==1.18.1 psutil==7.2.2 ruff==0.17.4
+          python -m pip install --no-deps --no-build-isolation -e .
+      - name: Testar utilitarios e instalacao editavel
+        run: python scripts/testes_sem_gpu.py
+      - name: Conferir lint de todo o codigo ativo
+        run: python -m ruff check pipeline gui tests setup.py scripts
+      - name: Conferir formatacao de todo o codigo ativo
+        run: python -m ruff format --check pipeline gui tests setup.py scripts

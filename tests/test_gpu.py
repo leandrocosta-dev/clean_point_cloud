@@ -1,24 +1,19 @@
 """Camada GPU (pipeline/gpu.py) contra referencias scipy/numpy em dados sinteticos."""
+
 import os
-from pathlib import Path
 import subprocess
 import sys
 import unittest
+from pathlib import Path
 
 import numpy as np
 from scipy import ndimage
 from scipy.spatial import cKDTree
 
 RAIZ = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(RAIZ / 'pipeline'))
-sys.path.insert(0, str(RAIZ / 'pipeline' / 'revo_frames'))
-import gpu  # noqa: E402
+import gpu
 
-try:
-    gpu.xp()
-    TEM_GPU = gpu.em_gpu()
-except gpu.ErroGPU:
-    TEM_GPU = False
+from tests.gpu_utils import CUDA_DISPONIVEL
 
 
 def _nuvem(n=40000, seed=0):
@@ -34,7 +29,7 @@ def _particao_igual(a, b):
     return len(pares) == len(np.unique(a)) == len(np.unique(b))
 
 
-@unittest.skipUnless(TEM_GPU, 'CUDA/CuPy ausente')
+@unittest.skipUnless(CUDA_DISPONIVEL, "CUDA/CuPy ausente")
 class VizinhosTest(unittest.TestCase):
     def test_knn_exato_igual_ao_ckdtree(self):
         P = _nuvem()
@@ -50,7 +45,7 @@ class VizinhosTest(unittest.TestCase):
 
     def test_knn_sem_raio_acha_sempre_os_k(self):
         P = _nuvem(20000)
-        Q = np.vstack([_nuvem(3000, 2), [[500.0, 500.0, 500.0]]])       # uma consulta muito longe
+        Q = np.vstack([_nuvem(3000, 2), [[500.0, 500.0, 500.0]]])  # uma consulta muito longe
         d, j = gpu.knn(P, Q, 12)
         dr, jr = cKDTree(P).query(Q, 12)
         self.assertTrue(np.all(j >= 0))
@@ -60,7 +55,7 @@ class VizinhosTest(unittest.TestCase):
     def test_vizinho_mais_proximo_com_e_sem_limite(self):
         P = _nuvem()
         Q = _nuvem(6000, 3) + [0, 0, 0.3]
-        Q[:100] += [100, 0, 0]                                           # fora do alcance
+        Q[:100] += [100, 0, 0]  # fora do alcance
         d, j = gpu.vizinho_mais_proximo(P, Q, dist_max=0.4)
         dr, jr = cKDTree(P).query(Q, 1, distance_upper_bound=0.4)
         achou = np.isfinite(dr)
@@ -68,7 +63,7 @@ class VizinhosTest(unittest.TestCase):
         self.assertTrue(achou.sum() > 1000 and (~achou).sum() >= 100)
         np.testing.assert_allclose(d[achou], dr[achou], atol=2e-4)
         self.assertGreater((j[achou] == jr[achou]).mean(), 0.999)
-        d2, j2 = gpu.vizinho_mais_proximo(P, Q)                          # sem limite
+        d2, j2 = gpu.vizinho_mais_proximo(P, Q)  # sem limite
         dr2, jr2 = cKDTree(P).query(Q)
         np.testing.assert_allclose(d2, dr2, rtol=1e-4, atol=2e-4)
         self.assertGreater((j2 == jr2).mean(), 0.999)
@@ -78,7 +73,7 @@ class VizinhosTest(unittest.TestCase):
         Q = _nuvem(3000, 4)
         n = gpu.contar_no_raio(P, Q, 0.8)
         ref = cKDTree(P).query_ball_point(Q, 0.8, return_length=True)
-        self.assertLess(np.abs(n - ref).max(), 2)                        # bordas de float32 no raio exato
+        self.assertLess(np.abs(n - ref).max(), 2)  # bordas de float32 no raio exato
 
     def test_normais_pca_k_e_raio_contra_numpy(self):
         P = _nuvem(30000)
@@ -89,7 +84,7 @@ class VizinhosTest(unittest.TestCase):
         v = np.linalg.eigh(np.einsum("nki,nkj->nij", Y, Y))[1][:, :, 0]
         v *= np.sign(v[:, 2])[:, None]
         np.testing.assert_allclose(np.abs((Nk * v).sum(1)), 1, atol=1e-5)
-        self.assertTrue(np.all(Nk[:, 2] > 0))                            # orientadas para a camera acima
+        self.assertTrue(np.all(Nk[:, 2] > 0))  # orientadas para a camera acima
         Nr, curv = gpu.normais_pca(P, raio=1.2, consultas=Q, orientar_para=[0, 0, 100], com_curvatura=True)
         listas = cKDTree(P).query_ball_point(Q, 1.2)
         vr = []
@@ -123,7 +118,7 @@ class VizinhosTest(unittest.TestCase):
         self.assertGreater(m2[:-50].mean(), 0.99)
 
 
-@unittest.skipUnless(TEM_GPU, 'CUDA/CuPy ausente')
+@unittest.skipUnless(CUDA_DISPONIVEL, "CUDA/CuPy ausente")
 class AgrupamentoTest(unittest.TestCase):
     def test_reduzir_voxel_igual_numpy(self):
         P = _nuvem(50000)
@@ -135,7 +130,10 @@ class AgrupamentoTest(unittest.TestCase):
             ch = (idx[:, 0] << 42) | (idx[:, 1] << 21) | idx[:, 2]
             u, inv, cnt = np.unique(ch, return_inverse=True, return_counts=True)
             w = np.ones(len(P)) if pesos is None else pesos
-            ref = np.stack([np.bincount(inv, weights=w * P[:, c]) for c in range(3)], 1) / np.bincount(inv, weights=w)[:, None]
+            ref = (
+                np.stack([np.bincount(inv, weights=w * P[:, c]) for c in range(3)], 1)
+                / np.bincount(inv, weights=w)[:, None]
+            )
             ok = cnt >= min_obs
             np.testing.assert_allclose(C, ref[ok], atol=1e-9)
             np.testing.assert_array_equal(cont, cnt[ok])
@@ -163,6 +161,7 @@ class AgrupamentoTest(unittest.TestCase):
 
     def test_entrada_cupy_sai_cupy(self):
         import cupy as cp
+
         P = cp.asarray(_nuvem(2000))
         C, n = gpu.reduzir_voxel(P, 0.5)
         self.assertIsInstance(C, cp.ndarray)
@@ -171,7 +170,7 @@ class AgrupamentoTest(unittest.TestCase):
         self.assertIsInstance(gpu.reduzir_voxel(cp.asnumpy(P), 0.5)[0], np.ndarray)
 
     def test_blocos_cobrem_tudo(self):
-        fatias = list(gpu.blocos(1000, bytes_por_item=1 << 40))          # nada cabe: 1 item por bloco
+        fatias = list(gpu.blocos(1000, bytes_por_item=1 << 40))  # nada cabe: 1 item por bloco
         self.assertEqual(len(fatias), 1000)
         fatias = list(gpu.blocos(10_000_000, bytes_por_item=100))
         self.assertEqual(fatias[0][0], 0)
@@ -179,7 +178,7 @@ class AgrupamentoTest(unittest.TestCase):
         self.assertTrue(all(b == a2 for (_, b), (a2, _) in zip(fatias, fatias[1:])))
 
 
-@unittest.skipUnless(TEM_GPU, 'CUDA/CuPy ausente')
+@unittest.skipUnless(CUDA_DISPONIVEL, "CUDA/CuPy ausente")
 class GeometriaTest(unittest.TestCase):
     def test_ransac_acha_plano_conhecido_com_outliers(self):
         rng = np.random.default_rng(7)
@@ -190,15 +189,21 @@ class GeometriaTest(unittest.TestCase):
         base = np.cross(n0, [1, 0, 0])
         base /= np.linalg.norm(base)
         base2 = np.cross(n0, base)
-        centro = -d0 * n0                                                   # ponto do plano: n0 . c + d0 = 0
+        centro = -d0 * n0  # ponto do plano: n0 . c + d0 = 0
         plano = centro + uv[:, :1] * base + uv[:, 1:] * base2 + 0.05 * rng.standard_normal((30000, 1)) * n0
-        objetos = centro + rng.uniform(-80, 80, (12000, 1)) * base + rng.uniform(-80, 80, (12000, 1)) * base2             + rng.uniform(5, 40, (12000, 1)) * n0                           # todos do lado + do plano
+        objetos = (
+            centro
+            + rng.uniform(-80, 80, (12000, 1)) * base
+            + rng.uniform(-80, 80, (12000, 1)) * base2
+            + rng.uniform(5, 40, (12000, 1)) * n0
+        )  # todos do lado + do plano
         P = np.vstack([plano, objetos])
         n, d, frac = gpu.ransac_plano(P, limiar=0.3, iteracoes=500, semente=1)
-        self.assertGreater(float(n @ n0), 0.9999)                          # orientada para o lado dos objetos
+        self.assertGreater(float(n @ n0), 0.9999)  # orientada para o lado dos objetos
         self.assertAlmostEqual(d, d0, delta=0.05)
         self.assertGreater(frac, 0.6)
         import revo_projeto as R
+
         nr, dr, fr = R.plano_ransac(P, 0.3, 500)
         self.assertGreater(float(n @ nr), 0.9999)
         self.assertAlmostEqual(d, dr, delta=0.05)
@@ -219,9 +224,13 @@ class GeometriaTest(unittest.TestCase):
         amostragem (num plano o residuo ponto-plano e zero para qualquer vizinho)."""
         rng = np.random.default_rng(seed)
         a = rng.uniform(0, 40, (3 * n, 2))
-        pts = np.vstack([np.column_stack([a[:n], np.zeros(n)]),
-                         np.column_stack([a[n:2 * n, 0], np.zeros(n), a[n:2 * n, 1]]),
-                         np.column_stack([np.zeros(n), a[2 * n:]])])
+        pts = np.vstack(
+            [
+                np.column_stack([a[:n], np.zeros(n)]),
+                np.column_stack([a[n : 2 * n, 0], np.zeros(n), a[n : 2 * n, 1]]),
+                np.column_stack([np.zeros(n), a[2 * n :]]),
+            ]
+        )
         nrm = np.vstack([np.tile(e, (n, 1)) for e in np.eye(3)[[2, 1, 0]]])
         return pts, nrm
 
@@ -231,18 +240,20 @@ class GeometriaTest(unittest.TestCase):
         sel = rng.choice(len(alvo), 30000, replace=False)
         ang = np.deg2rad([0.5, -0.4, 0.6])
         from gpu import _rotacao
+
         Rv = _rotacao(ang)
         tv = np.array([0.25, -0.20, 0.20])
         Tverd = np.eye(4)
-        Tverd[:3, :3], Tverd[:3, 3] = Rv, tv                              # origem -> alvo
-        origem = (alvo[sel] - tv) @ Rv                                    # inverso: alvo = Rv @ origem + tv
+        Tverd[:3, :3], Tverd[:3, 3] = Rv, tv  # origem -> alvo
+        origem = (alvo[sel] - tv) @ Rv  # inverso: alvo = Rv @ origem + tv
         # 10% de pontos espurios a 1,25 mm da superficie (dentro de dist_max, fora da escala c do Tukey)
         longe_da_quina = np.nonzero(((alvo == 0) | ((alvo > 5) & (alvo < 35))).all(1))[0]
         k = rng.choice(longe_da_quina, 3000, replace=False)
         lixo = (alvo[k] + 1.25 * nrm[k] - tv) @ Rv
         origem_ruidosa = np.vstack([origem, lixo])
-        T, info = gpu.icp_ponto_plano(origem_ruidosa, alvo, nrm, np.eye(4), dist_max=1.8, iteracoes=60,
-                                      perda="tukey", c=1.0)
+        T, info = gpu.icp_ponto_plano(
+            origem_ruidosa, alvo, nrm, np.eye(4), dist_max=1.8, iteracoes=60, perda="tukey", c=1.0
+        )
         self.assertLess(np.abs(T - Tverd).max(), 1e-4, (T, info))
         self.assertGreater(info["fitness"], 0.8)
         T2, info2 = gpu.icp_ponto_plano(origem, alvo, nrm, None, dist_max=1.8, iteracoes=60, perda="l2")
@@ -251,12 +262,15 @@ class GeometriaTest(unittest.TestCase):
 
     def test_componentes_iguais_ao_scipy_ndimage(self):
         rng = np.random.default_rng(4)
-        blocos_ = [rng.uniform(c, c + 6, (3000, 3)) for c in (0, 8.0, 20.0)]     # 3 nuvens separadas
-        blocos_.append(np.array([[3.0, 3.0, 40.0]]))                              # um ponto isolado
+        blocos_ = [rng.uniform(c, c + 6, (3000, 3)) for c in (0, 8.0, 20.0)]  # 3 nuvens separadas
+        blocos_.append(np.array([[3.0, 3.0, 40.0]]))  # um ponto isolado
         P = np.vstack(blocos_)
         voxel = 0.8
-        for conect, estrutura in ((26, np.ones((3, 3, 3))), (6, ndimage.generate_binary_structure(3, 1)),
-                                  (18, ndimage.generate_binary_structure(3, 2))):
+        for conect, estrutura in (
+            (26, np.ones((3, 3, 3))),
+            (6, ndimage.generate_binary_structure(3, 1)),
+            (18, ndimage.generate_binary_structure(3, 2)),
+        ):
             rot, tam = gpu.componentes_conexos_voxel(P, voxel, conect)
             idx = np.floor((P - P.min(0)) / voxel).astype(np.int64)
             g = np.zeros(idx.max(0) + 1, bool)
@@ -287,32 +301,41 @@ class AmbienteTest(unittest.TestCase):
     def _py(self, codigo, **env):
         e = {k: v for k, v in os.environ.items() if k not in ("CUDA_PATH", "REVO_PERMITIR_CPU")}
         e.update(env)
-        return subprocess.run([sys.executable, "-W", "error::UserWarning", "-c", codigo], cwd=str(RAIZ / "tests"), env=e,
-                              capture_output=True, text=True, timeout=300)
+        return subprocess.run(
+            [sys.executable, "-W", "error::UserWarning", "-c", codigo],
+            cwd=str(RAIZ / "tests"),
+            env=e,
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
 
     def test_sem_cuda_levanta_erro_gpu(self):
-        r = self._py("import gpu\ntry:\n gpu.xp()\nexcept gpu.ErroGPU as e:\n print('ERRO', e)",
-                     CUDA_VISIBLE_DEVICES="-1")
+        r = self._py(
+            "import gpu\ntry:\n gpu.xp()\nexcept gpu.ErroGPU as e:\n print('ERRO', e)", CUDA_VISIBLE_DEVICES="-1"
+        )
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("ERRO", r.stdout)
         self.assertIn("REVO_PERMITIR_CPU", r.stdout)
 
     def test_fallback_cpu_com_variavel(self):
-        codigo = ("import warnings, numpy as np, gpu\n"
-                  "warnings.simplefilter('ignore')\n"
-                  "assert gpu.xp() is np and not gpu.em_gpu()\n"
-                  "P = np.random.default_rng(0).uniform(0, 10, (3000, 3))\n"
-                  "d, j = gpu.knn(P, P, 4, 1.0); assert (j[:, 0] == np.arange(3000)).all()\n"
-                  "d, j = gpu.vizinho_mais_proximo(P, P[:5] + 0.01, 0.5); assert (j >= 0).all()\n"
-                  "C, n = gpu.reduzir_voxel(P, 1.0); assert n.sum() == 3000\n"
-                  "r, t = gpu.componentes_conexos_voxel(P, 1.0); assert t.sum() == 3000\n"
-                  "N = gpu.normais_pca(P, k=10); assert np.isfinite(N).all()\n"
-                  "print('OK')")
+        codigo = (
+            "import warnings, numpy as np, gpu\n"
+            "warnings.simplefilter('ignore')\n"
+            "assert gpu.xp() is np and not gpu.em_gpu()\n"
+            "P = np.random.default_rng(0).uniform(0, 10, (3000, 3))\n"
+            "d, j = gpu.knn(P, P, 4, 1.0); assert (j[:, 0] == np.arange(3000)).all()\n"
+            "d, j = gpu.vizinho_mais_proximo(P, P[:5] + 0.01, 0.5); assert (j >= 0).all()\n"
+            "C, n = gpu.reduzir_voxel(P, 1.0); assert n.sum() == 3000\n"
+            "r, t = gpu.componentes_conexos_voxel(P, 1.0); assert t.sum() == 3000\n"
+            "N = gpu.normais_pca(P, k=10); assert np.isfinite(N).all()\n"
+            "print('OK')"
+        )
         r = self._py(codigo, REVO_PERMITIR_CPU="1", CUDA_VISIBLE_DEVICES="-1")
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("OK", r.stdout)
 
-    @unittest.skipUnless(TEM_GPU, 'CUDA/CuPy ausente')
+    @unittest.skipUnless(CUDA_DISPONIVEL, "CUDA/CuPy ausente")
     def test_cuda_path_definido_sem_aviso_do_cupy(self):
         r = self._py("import gpu, os\ngpu.xp()\nprint(os.environ['CUDA_PATH'])")
         self.assertEqual(r.returncode, 0, r.stderr)

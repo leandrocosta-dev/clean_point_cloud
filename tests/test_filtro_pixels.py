@@ -1,21 +1,21 @@
 """Regressoes sinteticas: executar com python -m unittest discover -s tests."""
-import sys
+
 import unittest
-from pathlib import Path
 
 import numpy as np
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "pipeline" / "revo_frames"))
 from revo_projeto import filtro_pixels
 
+from tests.gpu_utils import CUDA_DISPONIVEL
 
+
+@unittest.skipUnless(CUDA_DISPONIVEL, "CUDA/CuPy ausente")
 class FiltroPixelsTest(unittest.TestCase):
     def filtrar(self, d):
         return filtro_pixels(d, tol=0.2, comp_min=1, adaptativo=True)
 
     def test_plano_inclinado(self):
         y, x = np.mgrid[:40, :40]
-        self.assertTrue(self.filtrar(100 + 0.3*x + 0.2*y).all())
+        self.assertTrue(self.filtrar(100 + 0.3 * x + 0.2 * y).all())
 
     def test_pico_isolado(self):
         d = np.full((40, 40), 100.0)

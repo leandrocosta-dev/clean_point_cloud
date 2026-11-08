@@ -28,9 +28,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["ruff"]
+dev = ["ruff==0.17.4", "pre-commit>=4,<5"]
 
-# Os scripts nao formam um pacote: setup.py instala so um .pth com pipeline/ e pipeline/revo_frames/.
+# setup.py expoe a raiz (gui) e os modulos soltos de pipeline/ e pipeline/revo_frames/ por .pth.
 [tool.setuptools]
 py-modules = []
 
@@ -42,21 +42,13 @@ extend-exclude = ["pipeline/legado", "pipeline/output", "aprendizado/cache", "gu
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B"]
 ignore = [
-    "E401",   # varios imports na mesma linha (estilo atual)
-    "E402",   # import depois de sys.path.insert (scripts; fase 3 remove)
-    "E701",   # if x: y numa linha
-    "E702",   # ponto e virgula
-    "E703",
-    "E731",   # lambda atribuida
+    "E402",   # imports apos configurar ambiente, backend grafico e constantes de entrada
+    "E731",   # callbacks numericos curtos e expressoes de log existentes
     "E741",   # nomes l, O, I (matematica: l, I)
     "B007",   # variavel de laco nao usada
-    "B008",
-    "B905",   # zip sem strict=
-    "B904",   # raise sem from
-    "B006",
-    "B023",
-    "I001",   # ordem de imports: o repo nao segue isort ainda (fase 3)
-    "E501",   # 750+ linhas longas legadas; o limite de 120 vale para codigo novo (fase 3 reformata)
+    "B905",   # zip com truncamento mantido para preservar contratos existentes
+    "B023",   # closures existentes em loops; alteracao de captura exige teste de comportamento
+    "E501",   # kernels CUDA, HTML embutido, docstrings e expressoes cientificas
 ]
 
 [tool.ruff.lint.per-file-ignores]

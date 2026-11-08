@@ -1,18 +1,18 @@
 """Consultas 3D (pipeline/consulta3d.py): selecoes, corte, comparacao, origem quadro/pixel, registro de inspecao."""
+
 import contextlib
 import io
 import json
 import os
-from pathlib import Path
-import sys
 import tempfile
 import unittest
+from pathlib import Path
 
+import consulta3d as C
 import numpy as np
 import open3d as o3d
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "pipeline"))
-import consulta3d as C  # noqa: E402
+from tests.gpu_utils import CUDA_DISPONIVEL
 
 
 def gravar(caminho, P):
@@ -24,6 +24,7 @@ def rodar(*args):
         return C.main(list(args))
 
 
+@unittest.skipUnless(CUDA_DISPONIVEL, "CUDA/CuPy ausente")
 class Consulta3DTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -58,14 +59,30 @@ class Consulta3DTest(unittest.TestCase):
         self.assertEqual(c["faltam"], 15)
         rodar("caixa", self.a, "--min", "-1", "-1", "-1", "--max", "41", "41", "1", "--registro", reg, "--regiao", "10")
         self.assertEqual(rodar("cobertura_inspecao", self.a, "--registro", reg, "--regiao", "10")["faltam"], 0)
-        with self.assertRaises(ValueError):       # registro nao mistura tamanhos de regiao
+        with self.assertRaises(ValueError):  # registro nao mistura tamanhos de regiao
             rodar("cobertura_inspecao", self.a, "--registro", reg, "--regiao", "30")
 
     def test_corte_png(self):
         png = os.path.join(self.tmp.name, "corte.png")
-        r = rodar("corte", self.a, self.b, "--ponto", "10", "0", "0", "--normal", "1", "0", "0", "--espessura", "0.6", "--png", png)
+        r = rodar(
+            "corte",
+            self.a,
+            self.b,
+            "--ponto",
+            "10",
+            "0",
+            "0",
+            "--normal",
+            "1",
+            "0",
+            "0",
+            "--espessura",
+            "0.6",
+            "--png",
+            png,
+        )
         self.assertTrue(os.path.getsize(png) > 1000)
-        self.assertEqual(r["fontes"][0]["pontos"], 80)      # uma coluna x=10
+        self.assertEqual(r["fontes"][0]["pontos"], 80)  # uma coluna x=10
         self.assertEqual(r["fontes"][1]["pontos"], 80)
 
     def test_comparar(self):
@@ -99,7 +116,7 @@ class Consulta3DTest(unittest.TestCase):
         self.assertEqual(f["quadros_mais_frequentes"][0]["quadro"], 0)
         self.assertEqual(f["quadros_mais_frequentes"][0]["pontos"], 20 * 80)
         self.assertIn("pixel", f["origem_exemplos"][0])
-        json.dumps(r)                                        # saida e JSON serializavel
+        json.dumps(r)  # saida e JSON serializavel
 
 
 if __name__ == "__main__":

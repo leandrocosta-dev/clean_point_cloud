@@ -1,12 +1,11 @@
 """Metricas padrao (pipeline/metricas.py) com geometria sintetica de resposta conhecida."""
-from pathlib import Path
-import sys
+
 import unittest
 
+import metricas as M
 import numpy as np
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "pipeline"))
-import metricas as M  # noqa: E402
+from tests.gpu_utils import CUDA_DISPONIVEL
 
 
 def plano(lado=60.0, passo=0.25, z=0.0):
@@ -15,6 +14,7 @@ def plano(lado=60.0, passo=0.25, z=0.0):
     return np.c_[x.ravel(), y.ravel(), np.full(x.size, z)]
 
 
+@unittest.skipUnless(CUDA_DISPONIVEL, "CUDA/CuPy ausente")
 class MetricasTest(unittest.TestCase):
     def test_distancias_deslocamento_conhecido(self):
         B = plano()
@@ -35,7 +35,7 @@ class MetricasTest(unittest.TestCase):
         self.assertAlmostEqual(r["vies_assinado_min_um"], 50.0, places=3)
         r2 = M.vies_por_celula(B - [0, 0, 0.05], B, N)
         self.assertAlmostEqual(r2["vies_assinado_max_um"], -50.0, places=3)
-        self.assertEqual(M.vies_por_celula(B + [0, 0, 5.0], B, N)["celulas"], 0)   # fora da tolerancia
+        self.assertEqual(M.vies_por_celula(B + [0, 0, 5.0], B, N)["celulas"], 0)  # fora da tolerancia
 
     def test_rugosidade_plano_vs_ruidoso(self):
         B = plano(30.0)

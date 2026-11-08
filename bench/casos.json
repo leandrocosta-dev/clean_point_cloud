@@ -44,10 +44,10 @@
   },
   {
    "nome": "p7_fundir_nitido",
-   "descricao": "Projeto 7: fundir_nitido sobre a limpeza acesso_corrigido com as poses finais; comparado a nuvem_nitida entregue (~8 min CPU)",
+   "descricao": "Projeto 7: fundir_nitido sobre a limpeza acesso_corrigido com as poses finais; poses finais da entrega indexadas por guid (bench_nitido_poses_p7.json); comparado a nuvem_nitida entregue (CPU, 8 min). Desde 2026-11-08 roda na GPU (~20 s com cache)",
    "caro": true,
    "entradas": {"PROJ": {"caminho": "{RAIZ}/pipeline/output/Project20261106_210152_acesso_corrigido"},
-                "POSES": {"caminho": "{HOME}/Desktop/Projeto7_ENTREGA/poses_finais.json"},
+                "POSES": {"caminho": "{RAIZ}/pipeline/output/bench_nitido_poses_p7.json"},
                 "REF": {"caminho": "{HOME}/Desktop/Projeto7_ENTREGA/nuvem_nitida.ply"}},
    "comandos": [["{PY}", "{PIPE}/fundir_nitido.py", "{PROJ}", "--poses", "{POSES}", "--saida", "{SAIDA}/fusao"]],
    "metricas": [{"tipo": "nuvem", "arquivo": "{SAIDA}/fusao/nuvem_nitida.ply", "referencia": "{REF}", "rugosidade": true, "componentes": true}],
