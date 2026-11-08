@@ -9,7 +9,7 @@ import argparse, os, sys, time
 import numpy as np
 import open3d as o3d
 from scipy.spatial import cKDTree
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # legado/ -> pipeline/
 from malha_meshlib import metricas, reparar
 from meshlib import mrmeshpy as mm
 

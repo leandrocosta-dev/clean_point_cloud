@@ -1,7 +1,7 @@
 """Reotimiza o grafo de segmentos com varios pesos de odometria e mede o vies normal por celula nos pares."""
 import sys, os, json, pickle, time
 import numpy as np
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # legado/ -> pipeline/
 import alinhar_segmentos as S
 from alinhar_varios import baixa_prioridade
 

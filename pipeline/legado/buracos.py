@@ -11,7 +11,7 @@ import open3d as o3d
 from scipy import sparse
 from scipy.sparse.csgraph import connected_components
 from scipy.spatial import cKDTree
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # legado/ -> pipeline/
 from alinhar_varios import baixa_prioridade
 baixa_prioridade()
 malha, pasta, segjson, selecao = sys.argv[1:5]
