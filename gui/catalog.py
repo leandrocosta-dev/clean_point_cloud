@@ -7,15 +7,18 @@ from introspect import ler_script
 RAIZ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PIPE = os.path.join(RAIZ, "pipeline")
 
-OCULTOS = {"revo_ui.py", "dph.py", "mundo_scan.py", "revo_projeto.py", "precisao.py", "relatorio_qualidade.py", "__init__.py"}
+OCULTOS = {"revo_ui.py", "dph.py", "mundo_scan.py", "revo_projeto.py", "precisao.py", "relatorio_qualidade.py", "__init__.py", "ciclo_precisao.py", "inspecao_fusao.py",
+           "recursos.py", "vizinhos_gpu.py", "cache_observacoes.py"}
 
 # arquivo (relativo a pipeline/) -> (categoria, titulo)
 CATEGORIAS = [
     ("Pipeline Revo", {
+        "triagem.py": "Triagem automática do projeto",
         "rodar_tudo.py": "Pipeline completo (limpa, une, funde, exporta)",
         "limpar_raw.py": "Limpar frames (frames.dataset)",
         "preparar_importacao.py": "Preparar copia independente para o Revo",
         "limpar_por_placa.py": "Limpar frames por altura sobre a placa",
+        "avaliar_corte_apoio.py": "Avaliar corte de apoio e recuperação em outras vistas",
         "uniao_scans.py": "Unir duas partes (frames de B em A)",
         "revo_pipeline.py": "Fusão, malha e exportação no Revo",
         "build_revo_project.py": "Montar projeto .revo",
@@ -28,15 +31,18 @@ CATEGORIAS = [
         "alinhar_segmentos.py": "2. Segmentos e grafo de poses",
         "alinhar_direto.py": "3. Otimização conjunta (alinhar_direto)",
         "limpar_por_consenso.py": "4. Limpeza por consenso",
+        "consenso_visibilidade.py": "Consenso por visibilidade (espaço livre entre scans)",
         "remapear_segmentos.py": "4b. Remapear segmentos",
         "cobertura.py": "Ordem gulosa de cobertura",
         "selecionar_segmentos.py": "5. Selecionar segmentos mínimos",
         "montar_pecas.py": "5b. Montar scan único + .revo",
         "avaliar_segmentos.py": "Avaliar viés por segmento",
         "avaliar_por_scan.py": "Avaliar viés por scan",
-        "exp_pesos.py": "Experimento de pesos de odometria",
     }),
     ("Fusão própria e malha", {
+        "rodar_ciclo_precisao.py": "Ciclo de precisão (revisões, 3D, correção e liberação)",
+        "fusao_superficies.py": "Fusão orientada CPU/CUDA (experimental)",
+        "comparar_fusao_cuda.py": "Benchmark de fusão CPU/CUDA contra Revo (experimental)",
         "fundir_proprio.py": "6. Fusão própria",
         "refinar_nuvem.py": "6b. Refinar nuvem",
         "uniao_revo_propria.py": "6c. União Revo + própria",
@@ -44,7 +50,6 @@ CATEGORIAS = [
         "malha_poisson.py": "6e. Malha de Poisson",
         "malha_meshlib.py": "Reparar/medir malha (MeshLib)",
         "completar_com_poisson.py": "Completar malha com Poisson",
-        "poisson_de_pedacos.py": "Poisson de pedaços",
         "confianca.py": "Mapa de confiança",
         "limpar_fragmentos.py": "Remover fragmentos isolados",
     }),
@@ -53,30 +58,37 @@ CATEGORIAS = [
         "base_por_cobertura.py": "Base por cobertura",
         "avaliar_fusao.py": "Avaliar fusão",
         "faltando.py": "O que falta na fundida",
-        "buracos.py": "Buracos por contorno",
     }),
     ("Face interna", {
         "alinhar_interna_por_ponte.py": "Alinhar interna por scan-ponte",
         "corrigir_interna_suave.py": "Corrigir interna (campo suave)",
-        "corrigir_interna_local.py": "Corrigir interna (local, não usar)",
         "sem_atravessar.py": "Cortar atravessamentos",
         "limpar_interna_com_externa.py": "Limpar interna com a externa",
-        "deslocar_interna.py": "Deslocar interna",
-        "encaixar_espessura.py": "Encaixar espessura nominal",
         "rugosidade_interna.py": "Medir rugosidade",
     }),
     ("Furos e reparo", {
         "fechar_furos_pequenos.py": "Fechar furinhos (com dado)",
-        "fechar_furos_com_dado.py": "Fechar furos com dado",
         "remover_remendos_discordantes.py": "Remover remendos discordantes",
         "lacunas.py": "Relatório de lacunas",
     }),
     ("Medição e inspeção", {
+        "metricas.py": "Métricas padrão (distâncias, viés por célula, rugosidade, lixo)",
+        "consulta3d.py": "Consulta e inspeção 3D (caixa, esfera, corte)",
+        "regressao.py": "Banco de regressão",
         "metrica_malha.py": "Métricas de malha",
         "vista_malha.py": "Vista por trás (frente/verso)",
         "meshinspector_ui.py": "Captura do MeshInspector",
         "auditar_limpeza.py": "Auditar limpeza",
         "avaliar_periferia.py": "Avaliar periferia",
+    }),
+    ("Legado (não usar)", {
+        "legado/corrigir_interna_local.py": "Corrigir interna local (deixou áspera)",
+        "legado/encaixar_espessura.py": "Encaixar espessura nominal",
+        "legado/deslocar_interna.py": "Deslocar interna (espessura nominal)",
+        "legado/fechar_furos_com_dado.py": "Fechar furos com dado (fechou aberturas reais)",
+        "legado/buracos.py": "Buracos por contorno",
+        "legado/poisson_de_pedacos.py": "Poisson de pedaços",
+        "legado/exp_pesos.py": "Experimento de pesos de odometria",
     }),
     ("Formato antigo (.dph)", {
         "revo_antigo/limpar_dph.py": "Limpar .dph",
@@ -111,7 +123,8 @@ CATEGORIAS = [
 GRUPOS = {
     "rodar_tudo.py": [
         ("Entrada e saída", ["projeto", "so_limpar", "saida_limpo", "saida_ply", "saida_uniao", "scans"]),
-        ("Limpeza dos frames", ["periferia_mm", "periferia_banda", "periferia_alargue", "jobs"]),
+        ("Limpeza dos frames", ["auto", "periferia_mm", "periferia_banda", "periferia_alargue", "ext_max_mm", "so_peca",
+                                "min_mantido", "exclusoes", "permitir_parcial", "jobs"]),
         ("Precisao e preservacao", ["modo_limpeza", "pixel_tol", "pixel_comp_min", "pixel_adaptativo", "temporal_passo", "temporal_min"]),
         ("União de duas partes", ["unir", "lados"]),
         ("Resolução e malha (Revo)", ["ponto", "malha", "otimizar", "grade"]),
@@ -128,9 +141,9 @@ GRUPOS = {
         ("Quadros e amostragem", ["min_pix_quadro", "sem_pixels", "amostra_quadros", "amostra_passo"]),
     ],
     "limpar_raw.py": [
-        ("Entrada e saída", ["projeto", "saida", "scans", "sem_ply_antigos", "jobs"]),
+        ("Entrada e saída", ["projeto", "saida", "scans", "sem_ply_antigos", "jobs", "permitir_parcial"]),
         ("Precisao e preservacao", ["modo_limpeza", "pixel_tol", "pixel_comp_min", "pixel_adaptativo", "temporal_passo", "temporal_min"]),
-        ("Filtros", ["sem_pixels", "sem_ilhas", "so_peca", "ext_max_mm", "min_mantido"]),
+        ("Filtros", ["sem_pixels", "sem_ilhas", "so_peca", "ext_max_mm", "min_mantido", "exclusoes"]),
         ("Remoção da mesa (periferia)", ["periferia_mm", "periferia_banda", "periferia_alargue"]),
     ],
 }
@@ -156,6 +169,11 @@ ROTULOS = {
     "so_limpar": "Só limpar e entregar o .revo (sem Revo)",
     "saida_limpo": "Pasta do projeto limpo",
     "saida_uniao": "Pasta da união",
+    "so_peca": "Só a peça (cena suja, peça isolada)",
+    "min_mantido": "Fração mínima mantida",
+    "exclusoes": "Exclusões de suportes (JSON)",
+    "auto": "Triagem automática (usa as opções recomendadas)",
+    "permitir_parcial": "Aceitar resultado parcial (scans não limpos)",
 }
 
 
@@ -173,11 +191,11 @@ MANUAIS = {
     "avaliar_por_scan.py": [P("pasta", posicional=True), P("arq", ajuda="json de poses", posicional=True),
                             P("saida", ajuda="json de saida (opcional)", posicional=True, nargs="?")],
     "avaliar_segmentos.py": [P("pasta", posicional=True), P("arquivos", ajuda="jsons de poses a comparar", posicional=True, nargs="+")],
-    "buracos.py": [P("malha", posicional=True), P("pasta", posicional=True), P("segjson", posicional=True), P("selecao", posicional=True),
+    "legado/buracos.py": [P("malha", posicional=True), P("pasta", posicional=True), P("segjson", posicional=True), P("selecao", posicional=True),
                    P("saida", ajuda="imagem/relatorio de saida")],
     "faltando.py": [P("ply", posicional=True), P("pasta", posicional=True), P("segjson", posicional=True), P("selecao", posicional=True),
                     P("saida", obrigatorio=True)],
-    "exp_pesos.py": [P("work", ajuda="pasta de trabalho dos segmentos", posicional=True), P("poses", ajuda="json de poses iniciais", posicional=True),
+    "legado/exp_pesos.py": [P("work", ajuda="pasta de trabalho dos segmentos", posicional=True), P("poses", ajuda="json de poses iniciais", posicional=True),
                      P("pesos", ajuda="pesos de odometria a testar", posicional=True, nargs="+")],
     "metrica_malha.py": [P("malhas", ajuda="uma ou mais malhas (.ply)", posicional=True, nargs="+")],
     "creality/alinhar_lados.py": [P("a", ajuda="nuvem do lado A", posicional=True), P("b", ajuda="nuvem do lado B", posicional=True),

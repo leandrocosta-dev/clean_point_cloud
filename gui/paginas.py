@@ -558,7 +558,7 @@ class PaginaFila(QWidget):
         lay = QVBoxLayout(self)
         lay.setContentsMargins(28, 22, 28, 12)
         lay.setSpacing(10)
-        lay.addWidget(titulo_pagina("Fila e execução", "As etapas rodam uma de cada vez, em prioridade baixa. Em caso de crash do Open3D a etapa é repetida "
+        lay.addWidget(titulo_pagina("Fila e execução", "As etapas rodam uma de cada vez, na prioridade escolhida em Ambiente (padrão alta). Em caso de crash do Open3D a etapa é repetida "
                                     "(Ambiente → tentativas)."))
         sp = QSplitter(Qt.Vertical)
         topo = QWidget()
@@ -1082,8 +1082,8 @@ class PaginaAmbiente(QWidget):
         lay = QVBoxLayout(w)
         lay.setContentsMargins(28, 22, 28, 12)
         lay.setSpacing(12)
-        lay.addWidget(titulo_pagina("Ambiente", "Como os comandos são executados. A máquina é sensível a carga sustentada (guia, seção 8): "
-                                    "mantenha prioridade baixa e poucos threads."))
+        lay.addWidget(titulo_pagina("Ambiente", "Como os comandos são executados. Padrão: prioridade alta e todos os processadores (REVO_RECURSOS=maximo); "
+                                    "use baixa só se as quedas antigas voltarem."))
         f, fl = cartao("Execução")
         form = QFormLayout()
         form.setHorizontalSpacing(16)
@@ -1099,8 +1099,11 @@ class PaginaAmbiente(QWidget):
         self.tent = SpinInt()
         self.tent.setRange(0, 10)
         self.tent.setValue(int(env["tentativas_crash"]))
-        self.prio = QCheckBox("Prioridade abaixo do normal (BELOW_NORMAL)")
-        self.prio.setChecked(bool(env["baixa_prioridade"]))
+        self.prio = Combo()
+        self.prio.addItems(["alta", "acima", "normal", "baixa"])
+        self.prio.setCurrentText(env.get("prioridade", "alta"))
+        self.prio.setToolTip("alta/acima/normal = todos os processadores (REVO_RECURSOS=maximo); "
+                             "baixa = BELOW_NORMAL e 12 threads (regra antiga do guia)")
         self.pe = QCheckBox("Parar a fila no primeiro erro")
         self.pe.setChecked(bool(env["parar_no_erro"]))
         self.mi = CampoTexto(app=app)
@@ -1114,7 +1117,7 @@ class PaginaAmbiente(QWidget):
         form.addRow("Pasta de trabalho dos comandos", self.cwd)
         form.addRow("Threads (OMP_NUM_THREADS)", self.omp)
         form.addRow("Repetir em crash (tentativas)", self.tent)
-        form.addRow("", self.prio)
+        form.addRow("Prioridade dos processos", self.prio)
         form.addRow("", self.pe)
         form.addRow("MeshInspector.exe", self.mi)
         form.addRow("RevoScan6.exe", self.rv)
@@ -1146,14 +1149,14 @@ class PaginaAmbiente(QWidget):
             wd.textChanged.connect(self.guardar)
         for wd in (self.omp, self.tent):
             wd.valueChanged.connect(self.guardar)
-        for wd in (self.prio, self.pe):
-            wd.toggled.connect(self.guardar)
+        self.prio.currentTextChanged.connect(self.guardar)
+        self.pe.toggled.connect(self.guardar)
         self.ee.textChanged.connect(self.guardar)
 
     def guardar(self):
         e = self.app.estado.env
         e.update(python=self.py.ed.text().strip(), cwd=self.cwd.ed.text().strip(), omp_threads=self.omp.value(),
-                 tentativas_crash=self.tent.value(), baixa_prioridade=self.prio.isChecked(), parar_no_erro=self.pe.isChecked(),
+                 tentativas_crash=self.tent.value(), prioridade=self.prio.currentText(), parar_no_erro=self.pe.isChecked(),
                  meshinspector=self.mi.ed.text().strip(), revo=self.rv.ed.text().strip(), extra_env=self.ee.toPlainText())
         self.app.salvar_depois()
 

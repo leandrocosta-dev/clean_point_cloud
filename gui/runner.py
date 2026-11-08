@@ -88,6 +88,8 @@ class Runner(QObject):
         pe = QProcessEnvironment.systemEnvironment()
         pe.insert("PYTHONUNBUFFERED", "1")
         pe.insert("PYTHONIOENCODING", "utf-8")
+        # prioridade baixa = regra antiga (12 threads); demais = modo maximo do pipeline/recursos.py
+        pe.insert("REVO_RECURSOS", "conservador" if env.get("prioridade") == "baixa" else "maximo")
         if env.get("omp_threads"):
             for k in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS"):
                 pe.insert(k, str(env["omp_threads"]))
@@ -108,12 +110,15 @@ class Runner(QObject):
         self.proc.start(cmd[0], cmd[1:])
 
     def _iniciou(self):
-        if self.estado_app.env.get("baixa_prioridade"):
-            try:
-                import psutil
-                psutil.Process(int(self.proc.processId())).nice(psutil.BELOW_NORMAL_PRIORITY_CLASS)
-            except Exception:
-                pass
+        prio = self.estado_app.env.get("prioridade", "alta")
+        try:
+            import psutil
+            classe = {"alta": psutil.HIGH_PRIORITY_CLASS, "acima": psutil.ABOVE_NORMAL_PRIORITY_CLASS,
+                      "baixa": psutil.BELOW_NORMAL_PRIORITY_CLASS}.get(prio)
+            if classe is not None:
+                psutil.Process(int(self.proc.processId())).nice(classe)
+        except Exception:
+            pass
 
     def _ler(self):
         dados = bytes(self.proc.readAllStandardOutput()).decode("utf-8", "replace")

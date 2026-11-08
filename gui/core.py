@@ -18,7 +18,7 @@ PADRAO = {
             "trabalho": os.path.join(os.path.expanduser("~"), "Desktop", "_trabalho"), "scans": []},
     "env": {
         "python": os.path.join(RAIZ, ".venv", "Scripts", "python.exe") if os.path.exists(os.path.join(RAIZ, ".venv", "Scripts", "python.exe")) else sys.executable,
-        "baixa_prioridade": True, "omp_threads": 4, "tentativas_crash": 2, "parar_no_erro": True,
+        "prioridade": "alta", "omp_threads": 0, "tentativas_crash": 2, "parar_no_erro": True,
         "meshinspector": r"C:\Program Files\MeshInspector\MeshInspector\MeshInspector.exe",
         "revo": r"C:\Program Files\Revo Scan 6\RevoScan6.exe", "extra_env": "", "cwd": RAIZ,
     },
@@ -34,6 +34,10 @@ class Estado:
         try:
             with open(ARQ_ESTADO, encoding="utf-8") as f:
                 salvo = json.load(f)
+            env_salvo = salvo.get("env") if isinstance(salvo.get("env"), dict) else {}
+            if "prioridade" not in env_salvo:   # estado antigo (BELOW_NORMAL + 4 threads): migra para o modo maximo
+                env_salvo.pop("baixa_prioridade", None)
+                env_salvo["omp_threads"] = 0
             for k, v in salvo.items():
                 if isinstance(v, dict) and isinstance(self.d.get(k), dict):
                     self.d[k].update(v)
