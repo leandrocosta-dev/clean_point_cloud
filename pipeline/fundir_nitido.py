@@ -14,182 +14,188 @@ poses.json: {guid: 4x4} leva cada scan ao referencial comum (partida; e refinada
 6. Apoio fraco: superficies com poucas observacoes (paredes de cavidade) entram em voxel de --voxel-fraco mm, longe
    (> --raio-fraco) da superficie principal e so se >= --scans-fraco scans independentes as confirmam.
 7. Remove componentes soltos pequenos (--comp-min da peca).
+
+Todo o calculo numerico roda na GPU (CuPy, `gpu.py`; sem CUDA o script para). Na CPU ficam so o SQLite e a decodificacao
+das mascaras dos quadros, a calibracao (`RevoScan.calibrar`: Nelder-Mead com cKDTree, sem equivalente na GPU, mas
+reaproveitada pelo cache) e a leitura/gravacao de PLY (Open3D). Leitura, calibracao e pontos 3D vao para
+`cache_observacoes` (chave = sha256 do frames.dataset + K): a 2a execucao sobre a mesma entrada nao le nem recalibra
+(`--sem-cache` desliga; `--cache-raiz` muda a pasta). A vizinhanca usa TODOS os pontos do raio (nao os k mais proximos).
 Saida: nuvem_nitida.ply (com normais), nuvem_apoio_fraco.ply (todas as observacoes fracas confirmadas, mais ruidosas:
 paredes de cavidade, sem o filtro de lamina), poses_finais.json, relatorio.json. Nao altera o projeto de entrada.
 """
+
 import argparse
 import json
 import os
 import sys
 import tempfile
 import time
+import types
 
 import numpy as np
 import open3d as o3d
-from scipy import ndimage
-from scipy.spatial import cKDTree
 
 AQUI = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, AQUI)
-sys.path.insert(0, os.path.join(AQUI, "revo_frames"))
-from alinhar_varios import baixa_prioridade  # noqa: E402
+import geom_gpu  # noqa: E402
+import gpu  # noqa: E402
+import pca3_gpu  # noqa: E402
+from cache_observacoes import calibracao_scan, pontos_gpu, pontos_scan  # noqa: E402
+from recursos import baixa_prioridade  # noqa: E402
 from revo_projeto import RevoScan  # noqa: E402
 
-WORKERS = 8
-MOTOR = "cpu"                   # "cuda": vizinhos por raio e agrupamentos na GPU (vizinhos_gpu.py)
-reg = o3d.pipelines.registration
 _GRADES = {}
 
 
 def _grade(F, raio):
-    """Grade GPU reaproveitada enquanto F (mesmo objeto) e o raio nao mudam (a grade fina F do mean-shift)."""
-    from vizinhos_gpu import Grade
+    """Grade GPU reaproveitada enquanto F (mesmo objeto) e o raio nao mudam (a grade fina F do mean-shift).
+    Guarda a referencia a F: o id nunca e reutilizado por outro array enquanto a grade esta no cache."""
     chave = (id(F), len(F), float(raio))
     if chave not in _GRADES:
         _GRADES.clear()
-        _GRADES[chave] = Grade(F, raio)
-    return _GRADES[chave]
+        _GRADES[chave] = (F, gpu.Grade(F, raio))
+    return _GRADES[chave][1]
 
 
-def grupos(chaves):
-    if MOTOR == "cuda":
-        # chave empacotada em int64: monotona na ordem lexicografica (x, y, z), entao inverso e contagens sao
-        # IDENTICOS aos de np.unique(axis=0) do caminho CPU
-        import cupy as cp
-        k = cp.asarray(chaves)
-        k = k - k.min(0)
-        d = (k.max(0) + 1).astype(cp.int64)
-        p = (k[:, 0] * d[1] + k[:, 1]) * d[2] + k[:, 2]
-        _, inv, n = cp.unique(p, return_inverse=True, return_counts=True)
-        return cp.asnumpy(inv).ravel(), cp.asnumpy(n)
-    _, inv, n = np.unique(chaves, axis=0, return_inverse=True, return_counts=True)
-    return inv.ravel(), n
+def grupos(X, voxel):
+    """(inverso, contagens) dos voxels de `voxel` mm de X (n, 3), na ordem lexicografica (x, y, z) das celulas."""
+    m = gpu.xp()
+    X = gpu.para_gpu(X, m.float64)
+    _, inv, n = gpu.agrupar(m.floor(X / voxel).astype(m.int64))
+    return inv, n
 
 
 def mais_proximo(C, X, raio):
-    """(d, idx) do vizinho mais proximo de cada X em C. CPU: exato sem limite; cuda: so ate `raio`
-    (alem disso d=inf e idx=-1; quem chama so usa d < raio)."""
-    if MOTOR == "cuda":
-        return _grade(C, raio).mais_proximo(X)
-    return cKDTree(C).query(X, workers=WORKERS)
+    """(d, idx) do vizinho mais proximo de cada X em C, so ate `raio` (alem disso d=inf e idx=-1)."""
+    return gpu.vizinho_mais_proximo(C, X, raio)
 
 
 def centroides(X, voxel, w=None, min_obs=1):
-    inv, n = grupos(np.floor(X / voxel).astype(np.int64))
-    pesos = np.ones(len(X)) if w is None else w
-    soma = np.bincount(inv, pesos, len(n))
-    C = np.stack([np.bincount(inv, X[:, i] * pesos, len(n)) / soma for i in range(3)], 1)
-    return C[n >= min_obs], n[n >= min_obs], inv
+    """Centroide (ponderado por w) de cada voxel com >= min_obs pontos; (C, contagens, inverso de todos os voxels)."""
+    m = gpu.xp()
+    X = gpu.para_gpu(X, m.float64)
+    inv, n = grupos(X, voxel)
+    if w is None:
+        soma, pesos = gpu.somar_por_grupo(X, inv, len(n)), n.astype(m.float64)
+    else:
+        w = gpu.para_gpu(w, m.float64)
+        soma, pesos = gpu.somar_por_grupo(X * w[:, None], inv, len(n)), gpu.somar_por_grupo(w, inv, len(n))
+    C = soma / pesos[:, None]
+    manter = n >= min_obs
+    return C[manter], n[manter], inv
 
 
-def vizinhos(arv, Q, k, raio):
-    d, i = arv.query(Q, k=k, distance_upper_bound=raio, workers=WORKERS)
-    fora = ~np.isfinite(d) | (i >= arv.n)                       # maquina instavel: valida os indices devolvidos
-    i = np.where(fora, 0, i)
-    return d, i, fora
+def _pca(g, Q, sigma):
+    """(s0, M, media) na GPU: M = sum w (y - media)(y - media)^T (mesma matriz de Grade.pca, sem sair do dispositivo)."""
+    m = gpu.xp()
+    S = g.somas(Q, sigma, gpu=True).astype(m.float64)
+    s0 = S[:, 0]
+    media = S[:, 1:4] / m.maximum(s0, 1e-30)[:, None]
+    xx, yy, zz, xy, xz, yz = (S[:, c] for c in range(4, 10))
+    M = m.empty((len(Q), 3, 3), m.float64)
+    M[:, 0, 0], M[:, 1, 1], M[:, 2, 2] = xx, yy, zz
+    M[:, 0, 1] = M[:, 1, 0] = xy
+    M[:, 0, 2] = M[:, 2, 0] = xz
+    M[:, 1, 2] = M[:, 2, 1] = yz
+    M -= s0[:, None, None] * (media[:, :, None] * media[:, None, :])
+    return s0, M, media
 
 
-def normais_locais(C, ref, k=40, raio=0.5, sigma=0.25, bloco=200000):
-    """PCA ponderado por gaussiana; devolve normal e razao menor/maior autovalor do plano local."""
-    if MOTOR == "cuda":                                          # todos do raio (CPU: os k mais proximos no raio)
-        from vizinhos_gpu import Grade
-        _, M, _ = Grade(C, raio).pca(C, sigma)
-        _, U = np.linalg.eigh(M)
-        N = U[:, :, 0]
-        return N * np.sign(np.sum(N * ref, 1, keepdims=True) + 1e-12)
-    arv = cKDTree(C)
-    N = np.zeros_like(C)
-    for a in range(0, len(C), bloco):
-        Q = C[a:a + bloco]
-        d, i, fora = vizinhos(arv, Q, k, raio)
-        w = np.exp(-(np.where(fora, 0, d) ** 2) / (2 * sigma ** 2))
-        w[fora] = 0
-        Y = C[i] - Q[:, None, :]
-        media = (w[..., None] * Y).sum(1) / w.sum(1, keepdims=True)
-        Y = Y - media[:, None, :]
-        M = np.einsum("nki,nk,nkj->nij", Y, w, Y)
-        _, U = np.linalg.eigh(M)
-        N[a:a + bloco] = U[:, :, 0]
-    return N * np.sign(np.sum(N * ref, 1, keepdims=True) + 1e-12)
+def normais_locais(C, ref, raio=0.5, sigma=0.25):
+    """Normal do plano local (PCA ponderado por gaussiana sobre TODOS os pontos do raio), orientada para `ref`."""
+    m = gpu.xp()
+    C = gpu.para_gpu(C, m.float64)
+    ref = gpu.para_gpu(ref, m.float64)
+    g = gpu.Grade(C, raio)
+    N = m.empty_like(C)
+    for a, b in gpu.blocos(len(C), bytes_por_item=1500):
+        _, M, _ = _pca(g, C[a:b], sigma)
+        N[a:b] = pca3_gpu.menor_autopar(M)[1]
+    return N * m.sign((N * ref).sum(1, keepdims=True) + 1e-12)
 
 
-def carregar(pasta, tmp, K):
-    sc = RevoScan(pasta, tmp)
-    ks = [k for k in range(len(sc.ids)) if sc.tem_prof[k]]
-    pts, cam = [], []
-    for k in ks:
-        P = sc.pontos(k, K)[0]
-        pts.append(P)
-        cam.append(np.repeat(sc.T[k][:3, 3][None], len(P), axis=0).astype(np.float32))
-    sc.c.close()
-    return np.vstack(pts), np.vstack(cam), len(ks)
+def carregar(pasta, scan, K, raiz_cache=None, usar_cache=True):
+    """(P (n, 3) float64 GPU, centro da camera por quadro (float32), pontos por quadro, info do cache).
+    `scan()` cria o RevoScan so se for preciso ler os quadros (cache sem acerto ou desligado)."""
+
+    def gerar():
+        sc = scan()
+        ks = [k for k in range(len(sc.ids)) if sc.tem_prof[k]]
+        pts = [pontos_gpu(sc, k, K)[0] for k in ks]
+        cam = np.array([sc.T[k][:3, 3] for k in ks], np.float32).reshape(-1, 3)
+        return gpu.xp().concatenate(pts), cam, np.array([len(p) for p in pts], np.int64)
+
+    if not usar_cache:
+        P, cam, cont = gerar()
+        return P, cam, cont, dict(reutilizado=False)
+    P, cam, cont, _, reuso = pontos_scan(pasta, K, gerar, raiz_cache)
+    return P, cam, cont, dict(reutilizado=reuso)
 
 
-def icp_multivista(nuv, T):
+def icp_multivista(nuv, T, normais=None):
+    """ICP ponto-plano multivista na GPU (gpu.icp_ponto_plano, Tukey k=0,15 mm): cada scan (menos o primeiro, que e a
+    referencia) contra a uniao dos outros nas poses atuais, com a mesma escala de tolerancias do caminho antigo (Open3D).
+    nuv {guid: centroides (n, 3)}; normais {guid: (n, 3)} (calculadas aqui como o Open3D: ate 40 vizinhos em 0,8 mm, se omitidas)."""
+    m = gpu.xp()
     guids = list(nuv)
-    est = reg.TransformationEstimationPointToPlane(reg.TukeyLoss(k=0.15))
+    nuv = {g: gpu.para_gpu(c, m.float64) for g, c in nuv.items()}
+    if normais is None:
+        normais = {g: geom_gpu.normais_hibrido(c, 0.8, max_nn=40, saida_gpu=True) for g, c in nuv.items()}
+    for g in guids:  # sem vizinhanca para o plano (normal NaN): nao serve de ponto nem de alvo
+        ok = m.isfinite(normais[g]).all(1)
+        nuv[g], normais[g] = nuv[g][ok], normais[g][ok]
     for tol in (1.0, 0.6, 0.4, 0.3, 0.25, 0.2, 0.2, 0.2):
-        for g in guids[1:]:                                     # o primeiro scan e a referencia
-            outros = o3d.geometry.PointCloud()
+        for g in guids[1:]:
+            pts, nrm = [], []
             for o in guids:
                 if o != g:
-                    q = o3d.geometry.PointCloud(nuv[o])
-                    q.transform(T[o])
-                    outros += q
-            r = reg.registration_icp(nuv[g], outros, tol, T[g], est, reg.ICPConvergenceCriteria(max_iteration=60))
-            T[g] = np.array(r.transformation)
+                    Rt = gpu.para_gpu(T[o][:3, :3].T.copy(), m.float64)
+                    pts.append(nuv[o] @ Rt + gpu.para_gpu(T[o][:3, 3].copy(), m.float64))
+                    nrm.append(normais[o] @ Rt)
+            T[g], _ = gpu.icp_ponto_plano(
+                nuv[g], m.concatenate(pts), m.concatenate(nrm), T[g], dist_max=tol, iteracoes=60, perda="tukey", c=0.15
+            )
     return T
 
 
 def sem_soltos(C, ref, viz_min, raio=0.3):
-    if MOTOR == "cuda":
-        from vizinhos_gpu import Grade
-        n = Grade(C, raio).contar(C)
-    else:
-        n = np.array(cKDTree(C).query_ball_point(C, raio, workers=WORKERS, return_length=True))
+    n = gpu.contar_no_raio(C, C, raio)
     ok = n > viz_min
     return C[ok], ref[ok], int((~ok).sum())
 
 
-def espessura_local(C, raio, k=80, bloco=100000):
+def espessura_local(C, raio):
     """RMS (mm) do plano local e numero de vizinhos: superficie = fina; nuvem de multipercurso = grossa."""
-    if MOTOR == "cuda":                                          # todos do raio (CPU: ate k=80 no raio)
-        from vizinhos_gpu import Grade
-        s0, M, _ = Grade(C, raio).pca(C, None)
-        soma = np.maximum(s0, 1)
-        return np.sqrt(np.maximum(np.linalg.eigvalsh(M)[:, 0], 0) / soma), s0.astype(int)
-    arv = cKDTree(C)
-    e, nv = np.zeros(len(C)), np.zeros(len(C), int)
-    for a in range(0, len(C), bloco):
-        Q = C[a:a + bloco]
-        _, i, fora = vizinhos(arv, Q, k, raio)
-        w = (~fora).astype(float)
-        Y = C[i] - Q[:, None, :]
-        soma = np.maximum(w.sum(1), 1)
-        Y = Y - ((w[..., None] * Y).sum(1) / soma[:, None])[:, None, :]
-        M = np.einsum("nki,nk,nkj->nij", Y, w, Y)
-        e[a:a + bloco] = np.sqrt(np.maximum(np.linalg.eigvalsh(M)[:, 0], 0) / soma)
-        nv[a:a + bloco] = w.sum(1)
+    m = gpu.xp()
+    C = gpu.para_gpu(C, m.float64)
+    g = gpu.Grade(C, raio)
+    e = m.empty(len(C), m.float64)
+    nv = m.empty(len(C), m.int64)
+    for a, b in gpu.blocos(len(C), bytes_por_item=1500):
+        s0, M, _ = _pca(g, C[a:b], None)
+        e[a:b] = m.sqrt(m.maximum(pca3_gpu.menor_autopar(M)[0], 0) / m.maximum(s0, 1))
+        nv[a:b] = s0.astype(m.int64)
     return e, nv
 
 
-def mean_shift(S, N, F, W, VF, sigma_t, sigma_h, raio=0.35, k=200, max_passo=0.1, bloco=50000):
+def mean_shift(S, N, F, W, VF, sigma_t, sigma_h, raio=0.35, max_passo=0.1):
     """Leva cada amostra S ao longo da normal N ate a moda de altura da grade fina F (pesos W, visada VF)."""
-    if MOTOR == "cuda":                                          # todos do raio (CPU: os k=200 mais proximos)
-        D = _grade(F, raio).mean_shift(S, N, W, VF, sigma_t, sigma_h, max_passo)
-        return S + D[:, None] * N, D
-    arv = cKDTree(F)
-    D = np.zeros(len(S))
-    for a in range(0, len(S), bloco):
-        Q, Nq = S[a:a + bloco], N[a:a + bloco]
-        d, i, fora = vizinhos(arv, Q, k, raio)
-        h = np.einsum("nkj,nj->nk", F[i] - Q[:, None, :], Nq)
-        t2 = np.maximum(np.where(fora, 0, d) ** 2 - h ** 2, 0)
-        w = W[i] * np.exp(-t2 / (2 * sigma_t ** 2)) * np.exp(-(h ** 2) / (2 * sigma_h ** 2))
-        w *= np.einsum("nkj,nj->nk", VF[i], Nq) > 0.05          # face oposta de parede fina nao conta
-        w[fora] = 0
-        D[a:a + bloco] = np.clip((w * h).sum(1) / np.maximum(w.sum(1), 1e-9), -max_passo, max_passo)
+    m = gpu.xp()
+    S = gpu.para_gpu(S, m.float64)
+    N = gpu.para_gpu(N, m.float64)
+    D = gpu.para_gpu(_grade(F, raio).mean_shift(S, gpu.para_cpu(N), W, VF, sigma_t, sigma_h, max_passo))
     return S + D[:, None] * N, D
+
+
+def por_voxel(X, V, sel, w, voxel, minimo):
+    """Centroide ponderado, visada media (unitaria), soma dos pesos e contagem dos voxels com >= minimo observacoes."""
+    m = gpu.xp()
+    Xs, Vs, ws = X[sel], V[sel], w[sel]
+    inv, nn = grupos(Xs, voxel)
+    soma = gpu.somar_por_grupo(ws, inv, len(nn))
+    C = gpu.somar_por_grupo(Xs * ws[:, None], inv, len(nn)) / soma[:, None]
+    Vm = gpu.somar_por_grupo(Vs, inv, len(nn))
+    k = nn >= minimo
+    return C[k], Vm[k] / m.maximum(m.linalg.norm(Vm[k], axis=1, keepdims=True), 1e-12), soma[k], nn[k]
 
 
 def main():
@@ -199,7 +205,9 @@ def main():
     ap.add_argument("--saida", required=True)
     ap.add_argument("--voxel", type=float, default=0.1, help="amostras do mean-shift")
     ap.add_argument("--voxel-saida", type=float, default=0.07, help="espacamento final depois do colapso")
-    ap.add_argument("--esp-max", type=float, default=0.07, help="mm; RMS local (r=0,3) acima disso e nuvem, nao superficie")
+    ap.add_argument(
+        "--esp-max", type=float, default=0.07, help="mm; RMS local (r=0,3) acima disso e nuvem, nao superficie"
+    )
     ap.add_argument("--esp-max-fraco", type=float, default=0.05, help="idem na camada de apoio fraco (r=0,6)")
     ap.add_argument("--cos-min", type=float, default=0.3)
     ap.add_argument("--dist-max", type=float, default=0.25)
@@ -211,129 +219,162 @@ def main():
     ap.add_argument("--raio-fraco", type=float, default=0.3)
     ap.add_argument("--scans-fraco", type=int, default=2)
     ap.add_argument("--comp-min", type=float, default=0.002)
-    ap.add_argument("--motor", choices=["cpu", "cuda"], default="cpu",
-                    help="cuda: vizinhos por raio e agrupamentos na GPU (todos do raio; CPU usa os k mais proximos)")
+    ap.add_argument("--sem-cache", action="store_true", help="nao usa o cache de calibracao e pontos (le tudo de novo)")
+    ap.add_argument("--cache-raiz", default=None, help="pasta do cache (padrao: pipeline/output/cache_obs)")
+    ap.add_argument(
+        "--motor", choices=["cuda"], default="cuda", help=argparse.SUPPRESS
+    )  # compatibilidade: so existe GPU
     a = ap.parse_args()
-    global MOTOR, WORKERS
     baixa_prioridade()
-    from recursos import orcamento_threads
-    _, WORKERS = orcamento_threads(1)
-    if a.motor == "cuda":
-        from vizinhos_gpu import disponivel
-        if not disponivel():
-            sys.exit("--motor cuda pedido, mas CuPy/GPU CUDA indisponivel")
-    MOTOR = a.motor
+    m = gpu.xp()  # ErroGPU se nao houver CUDA
     t0 = time.time()
     tempos = {}
     marca = [time.time()]
 
     def etapa(nome):
+        if gpu.em_gpu():
+            m.cuda.Stream.null.synchronize()
         agora = time.time()
         tempos[nome] = round(agora - marca[0], 2)
         marca[0] = agora
         print(f"[{nome}: {tempos[nome]:.1f} s]", flush=True)
+
     if os.path.exists(a.saida) and os.listdir(a.saida):
         sys.exit(f"destino ja existe: {a.saida}")
     os.makedirs(a.saida, exist_ok=True)
     poses0 = {g: np.array(T) for g, T in json.load(open(a.poses)).items()}
     rel = dict(parametros=vars(a))
+    usar_cache = not a.sem_cache
+    cache_info = dict(ativo=usar_cache, calibracao_reutilizada=0, pontos_reutilizados=0)
 
     with tempfile.TemporaryDirectory() as tmp:
-        amostra = RevoScan(os.path.join(a.projeto, "data", next(iter(poses0))), tmp)
-        f = amostra.foco_gravado(0)
+        pasta = {g: os.path.join(a.projeto, "data", g) for g in poses0}
+        abertos = {}
+
+        def scan(g):  # RevoScan so quando o cache nao basta (copia o frames.dataset)
+            if g not in abertos:
+                abertos[g] = RevoScan(pasta[g], tmp)
+            return abertos[g]
+
+        f = RevoScan.foco_gravado(types.SimpleNamespace(pasta=pasta[next(iter(poses0))]), 0)
         centros = []
-        amostra.c.close()
         for g in poses0:
-            sc = RevoScan(os.path.join(a.projeto, "data", g), tmp, reusar=True)
-            K, _ = sc.calibrar(0)
-            centros.append(K[2:])
-            sc.c.close()
+            if usar_cache:
+                Kg, _, reuso = calibracao_scan(pasta[g], lambda g=g: scan(g).calibrar(0), 0, a.cache_raiz)
+                cache_info["calibracao_reutilizada"] += int(reuso)
+            else:
+                Kg, _ = scan(g).calibrar(0)
+            centros.append(Kg[2:])
         cx, cy = np.median(centros, 0)
         K = (f, f, float(cx), float(cy))
         rel["K"] = K
         print("K", np.round(K, 3), flush=True)
-        dados = {g: carregar(os.path.join(a.projeto, "data", g), tmp, K) for g in poses0}
-    rel["quadros"] = {g: d[2] for g, d in dados.items()}
+        dados = {}
+        for g in poses0:
+            P, cam, cont, info = carregar(pasta[g], lambda g=g: scan(g), K, a.cache_raiz, usar_cache)
+            dados[g] = (P, cam, cont)
+            cache_info["pontos_reutilizados"] += int(info["reutilizado"])
+        for sc in abertos.values():
+            sc.c.close()
+    rel["cache"] = cache_info
+    rel["quadros"] = {g: len(d[2]) for g, d in dados.items()}
     rel["pontos_entrada"] = {g: len(d[0]) for g, d in dados.items()}
     etapa("leitura_e_calibracao")
 
-    nuv = {}
-    for g, (X, _, _) in dados.items():
-        p = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(centroides(X, 0.2, min_obs=3)[0]))
-        p.estimate_normals(o3d.geometry.KDTreeSearchParamHybrid(radius=0.8, max_nn=40))
-        nuv[g] = p
+    nuv = {g: centroides(d[0], 0.2, min_obs=3)[0] for g, d in dados.items()}
     T = icp_multivista(nuv, {g: x.copy() for g, x in poses0.items()})
+    del nuv
     etapa("icp_multivista")
     json.dump({g: x.tolist() for g, x in T.items()}, open(os.path.join(a.saida, "poses_finais.json"), "w"), indent=1)
     for g, x in T.items():
         D = np.linalg.inv(poses0[g]) @ x
-        print(g, "ICP: %.3f graus %.3f mm" % (np.degrees(np.arccos(np.clip((np.trace(D[:3, :3]) - 1) / 2, -1, 1))), np.linalg.norm(D[:3, 3])), flush=True)
+        print(
+            g,
+            "ICP: %.3f graus %.3f mm"
+            % (np.degrees(np.arccos(np.clip((np.trace(D[:3, :3]) - 1) / 2, -1, 1))), np.linalg.norm(D[:3, 3])),
+            flush=True,
+        )
 
-    X = np.vstack([d[0] @ T[g][:3, :3].T + T[g][:3, 3] for g, d in dados.items()])
-    V = np.vstack([(np.asarray(d[1], float) @ T[g][:3, :3].T + T[g][:3, 3]) for g, d in dados.items()]) - X
-    rot = np.concatenate([np.full(len(d[0]), i, np.int8) for i, d in enumerate(dados.values())])
-    del dados
-    V /= np.linalg.norm(V, axis=1, keepdims=True)
+    Xl, Vl, rl = [], [], []
+    for i, (g, (P, cam, cont)) in enumerate(dados.items()):
+        Rt = gpu.para_gpu(T[g][:3, :3].T.copy(), m.float64)
+        t = gpu.para_gpu(T[g][:3, 3].copy(), m.float64)
+        Xg = P @ Rt + t
+        Vg = m.repeat(gpu.para_gpu(cam, m.float64) @ Rt + t, gpu.para_gpu(cont), axis=0) - Xg
+        Vg /= m.linalg.norm(Vg, axis=1, keepdims=True)
+        Xl.append(Xg)
+        Vl.append(Vg)
+        rl.append(m.full(len(Xg), i, m.int8))
+        dados[g] = None
+    del dados, P
+    X, V, rot = m.concatenate(Xl), m.concatenate(Vl), m.concatenate(rl)
+    del Xl, Vl, rl
     print("observacoes", len(X), flush=True)
 
     # superficie grossa e normais orientadas
-    C0, _, inv = centroides(X, 0.2, min_obs=3)
-    inv_todos, n_todos = grupos(np.floor(X / 0.2).astype(np.int64))
-    v_med = np.stack([np.bincount(inv_todos, V[:, i], len(n_todos)) for i in range(3)], 1)[n_todos >= 3]
+    inv_t, n_t = grupos(X, 0.2)
+    grosso = n_t >= 3
+    C0 = (gpu.somar_por_grupo(X, inv_t, len(n_t)) / n_t[:, None])[grosso]
+    v_med = gpu.somar_por_grupo(V, inv_t, len(n_t))[grosso]
+    del inv_t, n_t
     N0 = normais_locais(C0, v_med)
     dist, idx = mais_proximo(C0, X, 0.4)
-    if idx.max() >= len(C0):
-        raise RuntimeError("cKDTree devolveu indice invalido")
-    sem = idx < 0                                    # so no motor cuda: sem centroide a < 0,4 mm
-    idx = np.maximum(idx, 0)
-    N_obs = N0[idx]
-    cosv = np.sum(N_obs * V, 1)
-    h = np.sum((X - C0[idx]) * N_obs, 1)
-    if sem.any():                                    # contam como fora do plano (nunca entram em ok)
+    sem = idx < 0  # sem centroide a < 0,4 mm
+    idx = m.maximum(idx, 0)
+    cosv = m.empty(len(X), m.float64)
+    h = m.empty(len(X), m.float64)
+    for b0, b1 in gpu.blocos(len(X), bytes_por_item=400):
+        N_obs = N0[idx[b0:b1]]
+        cosv[b0:b1] = (N_obs * V[b0:b1]).sum(1)
+        h[b0:b1] = ((X[b0:b1] - C0[idx[b0:b1]]) * N_obs).sum(1)
+    del idx, N_obs
+    if bool(sem.any()):  # contam como fora do plano (nunca entram em ok)
         cosv[sem] = 1.0
-        h[sem] = np.inf
+        h[sem] = m.inf
         rel["obs_sem_vizinho_04mm"] = int(sem.sum())
-    plano_ok = (dist < 0.4) & (np.abs(h) <= a.dist_max)
+    del sem
+    plano_ok = (dist < 0.4) & (m.abs(h) <= a.dist_max)
     ok = plano_ok & (cosv >= a.cos_min)
+    del dist, plano_ok
     rel["obs_boas"] = float(ok.mean())
     rel["obs_rasantes"] = float((cosv < a.cos_min).mean())
-    rel["obs_fora_plano"] = float((np.abs(h) > a.dist_max).mean())
-    print("obs boas %.1f%% (rasantes %.1f%%, fora do plano %.1f%%)" % (100 * ok.mean(), 100 * (cosv < a.cos_min).mean(), 100 * (np.abs(h) > a.dist_max).mean()), flush=True)
+    rel["obs_fora_plano"] = float((m.abs(h) > a.dist_max).mean())
+    print(
+        "obs boas %.1f%% (rasantes %.1f%%, fora do plano %.1f%%)"
+        % (100 * rel["obs_boas"], 100 * rel["obs_rasantes"], 100 * rel["obs_fora_plano"]),
+        flush=True,
+    )
 
-    def por_voxel(sel, w, voxel, minimo):
-        Xs, Vs, ws = X[sel], V[sel], w[sel]
-        inv_, nn = grupos(np.floor(Xs / voxel).astype(np.int64))
-        soma = np.bincount(inv_, ws, len(nn))
-        C_ = np.stack([np.bincount(inv_, Xs[:, i] * ws, len(nn)) / soma for i in range(3)], 1)
-        V_ = np.stack([np.bincount(inv_, Vs[:, i] * ws, len(nn)) for i in range(3)], 1)
-        m = nn >= minimo
-        return C_[m], V_[m] / np.maximum(np.linalg.norm(V_[m], axis=1, keepdims=True), 1e-12), soma[m], nn[m]
-
-    pesos = np.maximum(cosv, 0.05) ** 2
-    F, VF, W, _ = por_voxel(ok, pesos, 0.05, 1)
-    S, ref, _, n = por_voxel(ok, pesos, a.voxel_saida, a.min_obs)
+    pesos = m.maximum(cosv, 0.05) ** 2
+    del cosv
+    F, VF, W, _ = por_voxel(X, V, ok, pesos, 0.05, 1)
+    S, ref, _, n = por_voxel(X, V, ok, pesos, a.voxel_saida, a.min_obs)
+    del ok, pesos
     rel["grade_fina"] = len(F)
     rel["amostras_iniciais"] = len(S)
-    rel["obs_por_voxel_mediana"] = float(np.median(n))
-    print("grade fina", len(F), "| amostras", len(S), "| obs/voxel", np.median(n), flush=True)
+    rel["obs_por_voxel_mediana"] = float(m.median(n))
+    print("grade fina", len(F), "| amostras", len(S), "| obs/voxel", rel["obs_por_voxel_mediana"], flush=True)
     etapa("superficie_grossa_e_grades")
-    S, ref, soltos = sem_soltos(S, ref, a.viz_min)     # grade mais densa: so tira o que esta realmente solto
+    S, ref, soltos = sem_soltos(S, ref, a.viz_min)  # grade mais densa: so tira o que esta realmente solto
     rel["soltos_removidos"] = soltos
     print("soltos removidos", soltos, flush=True)
 
     for sig_h in (0.12, 0.10, 0.08, 0.06, 0.05):
-        N = normais_locais(S, ref, k=48, raio=0.4, sigma=0.18)
+        N = normais_locais(S, ref, raio=0.4, sigma=0.18)
         S, D = mean_shift(S, N, F, W, VF, a.sigma_t, sig_h)
-        rel[f"desloc_h{sig_h}_um"] = dict(mediana=float(np.median(np.abs(D)) * 1000), p99=float(np.percentile(np.abs(D), 99) * 1000))
+        rel[f"desloc_h{sig_h}_um"] = dict(
+            mediana=float(m.median(m.abs(D)) * 1000), p99=float(m.percentile(m.abs(D), 99) * 1000)
+        )
         print("mean-shift", sig_h, rel[f"desloc_h{sig_h}_um"], flush=True)
     del F, VF, W
     _GRADES.clear()
+    gpu.liberar_memoria()
     etapa("mean_shift_5_passadas")
 
     # uma amostra por voxel: as camadas colapsadas caem no mesmo voxel
-    inv_, nn = grupos(np.floor(S / a.voxel_saida).astype(np.int64))
-    C = np.stack([np.bincount(inv_, S[:, i], len(nn)) / nn for i in range(3)], 1)
-    ref = np.stack([np.bincount(inv_, ref[:, i], len(nn)) for i in range(3)], 1)
+    inv_, nn = grupos(S, a.voxel_saida)
+    C = gpu.somar_por_grupo(S, inv_, len(nn)) / nn[:, None]
+    ref = gpu.somar_por_grupo(ref, inv_, len(nn))
     rel["amostras_apos_colapso"] = len(C)
     print("apos colapso", len(S), "->", len(C), flush=True)
     C, ref, soltos = sem_soltos(C, ref, 12)
@@ -341,62 +382,78 @@ def main():
     e, _ = espessura_local(C, 0.3)
     fina = e <= a.esp_max
     rel["nuvem_removida_principal"] = int((~fina).sum())
-    print("espessura local: mediana %.1f um p99 %.1f um | removidos > %.0f um: %d" % (np.median(e) * 1000, np.percentile(e, 99) * 1000, a.esp_max * 1000, (~fina).sum()), flush=True)
+    print(
+        "espessura local: mediana %.1f um p99 %.1f um | removidos > %.0f um: %d"
+        % (
+            float(m.median(e)) * 1000,
+            float(m.percentile(e, 99)) * 1000,
+            a.esp_max * 1000,
+            rel["nuvem_removida_principal"],
+        ),
+        flush=True,
+    )
     C, ref = C[fina], ref[fina]
     C, ref, soltos = sem_soltos(C, ref, 12)
     rel["soltos_removidos_fim2"] = soltos
     etapa("colapso_espessura_soltos")
 
     # apoio fraco: confirmado por >= scans-fraco scans e longe da superficie principal
-    d_princ = mais_proximo(C, X, a.raio_fraco)[0]     # so importa d > raio_fraco
-    fracos = np.flatnonzero((d_princ > a.raio_fraco) & (np.abs(h) <= 1.0))
+    d_princ = mais_proximo(C, X, a.raio_fraco)[0]  # so importa d > raio_fraco
+    fracos = m.flatnonzero((d_princ > a.raio_fraco) & (m.abs(h) <= 1.0))
+    del d_princ, h
     if len(fracos):
-        qf = np.floor(X[fracos] / a.voxel_fraco).astype(np.int64)
-        inv_, nn = grupos(qf)
-        cont = np.zeros((len(nn), len(np.unique(rot))), bool)
+        Xf, Vxf = X[fracos], V[fracos]
+        inv_, nn = grupos(Xf, a.voxel_fraco)
+        cont = m.zeros((len(nn), int(m.unique(rot).size)), bool)
         cont[inv_, rot[fracos]] = True
-        m = (nn >= a.min_obs_fraco) & (cont.sum(1) >= a.scans_fraco)
-        Cf = np.stack([np.bincount(inv_, X[fracos, i], len(nn)) / nn for i in range(3)], 1)[m]
-        Vf = np.stack([np.bincount(inv_, V[fracos, i], len(nn)) for i in range(3)], 1)[m]
+        sel = (nn >= a.min_obs_fraco) & (cont.sum(1) >= a.scans_fraco)
+        Cf = (gpu.somar_por_grupo(Xf, inv_, len(nn)) / nn[:, None])[sel]
+        Vf = gpu.somar_por_grupo(Vxf, inv_, len(nn))[sel]
+        n_antes = 0
         if len(Cf):
-            camada = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(Cf))   # todas as confirmadas, em arquivo separado
-            camada.normals = o3d.utility.Vector3dVector(normais_locais(Cf, Vf, k=60, raio=0.6, sigma=0.3))
+            camada = o3d.geometry.PointCloud(
+                o3d.utility.Vector3dVector(gpu.para_cpu(Cf))
+            )  # todas as confirmadas, em arquivo separado
+            camada.normals = o3d.utility.Vector3dVector(gpu.para_cpu(normais_locais(Cf, Vf, raio=0.6, sigma=0.3)))
             o3d.io.write_point_cloud(os.path.join(a.saida, "nuvem_apoio_fraco.ply"), camada, write_ascii=False)
             ef, nv = espessura_local(Cf, 0.6)
-            sup = (ef <= a.esp_max_fraco) & (nv >= 20)         # lamina, nao volume: multipercurso e descartado
+            sup = (ef <= a.esp_max_fraco) & (nv >= 20)  # lamina, nao volume: multipercurso e descartado
             n_antes = len(Cf)
             Cf, Vf = Cf[sup], Vf[sup]
-            Nf = normais_locais(Cf, Vf, k=60, raio=0.6, sigma=0.3)
-            Xf, Vxf = X[fracos], V[fracos]
-            for sig_h in (0.1, 0.07, 0.05):                    # mesmo colapso, sobre as observacoes da propria camada
-                Cf, _ = mean_shift(Cf, Nf, Xf, np.ones(len(Xf)), Vxf, 0.2, sig_h, raio=0.5, k=120)
-                Nf = normais_locais(Cf, Vf, k=60, raio=0.6, sigma=0.3)
-        rel["apoio_fraco"] = dict(obs=len(fracos), voxels_candidatos=len(nn), voxels_um_scan=int(((nn >= a.min_obs_fraco) & (cont.sum(1) < a.scans_fraco)).sum()), confirmados=n_antes if len(Cf) else 0, pontos=len(Cf))
+            if len(Cf):
+                Nf = normais_locais(Cf, Vf, raio=0.6, sigma=0.3)
+                for sig_h in (0.1, 0.07, 0.05):  # mesmo colapso, sobre as observacoes da propria camada
+                    Cf, _ = mean_shift(Cf, Nf, Xf, m.ones(len(Xf)), Vxf, 0.2, sig_h, raio=0.5)
+                    Nf = normais_locais(Cf, Vf, raio=0.6, sigma=0.3)
+        rel["apoio_fraco"] = dict(
+            obs=len(fracos),
+            voxels_candidatos=len(nn),
+            voxels_um_scan=int(((nn >= a.min_obs_fraco) & (cont.sum(1) < a.scans_fraco)).sum()),
+            confirmados=n_antes if len(Cf) else 0,
+            pontos=len(Cf),
+        )
         print("apoio fraco", rel["apoio_fraco"], flush=True)
-        C, ref = np.vstack([C, Cf]), np.vstack([ref, Vf])
-    del X, V
+        C, ref = m.concatenate([C, Cf]), m.concatenate([ref, Vf])
+        del Xf, Vxf
+    del X, V, rot
+    _GRADES.clear()
+    gpu.liberar_memoria()
     etapa("apoio_fraco")
-    N = normais_locais(C, ref, k=48, raio=0.5, sigma=0.22)
+    N = normais_locais(C, ref, raio=0.5, sigma=0.22)
 
     # componentes soltos (grade de 0,5 mm)
-    g = np.floor((C - C.min(0)) / 0.5).astype(np.int64)
-    vol = np.zeros(g.max(0) + 1, bool)
-    vol[tuple(g.T)] = True
-    lab, ncomp = ndimage.label(vol, structure=np.ones((3, 3, 3)))
-    lp = lab[tuple(g.T)]
-    tam = np.bincount(lp, minlength=ncomp + 1)
+    lp, tam = gpu.componentes_conexos_voxel(C, 0.5, 26)
     manter = tam[lp] >= a.comp_min * len(C)
-    rel["componentes"] = dict(total=int(ncomp), pontos_removidos=int((~manter).sum()), maiores=sorted(tam[1:].tolist(), reverse=True)[:8])
+    rel["componentes"] = dict(total=len(tam), pontos_removidos=int((~manter).sum()), maiores=tam[:8].tolist())
     print("componentes", rel["componentes"], flush=True)
-    C, N = C[manter], N[manter]
+    C, N = gpu.para_cpu(C[manter]), gpu.para_cpu(N[manter])
 
     p = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(C))
     p.normals = o3d.utility.Vector3dVector(N)
     o3d.io.write_point_cloud(os.path.join(a.saida, "nuvem_nitida.ply"), p, write_ascii=False)
     rel["pontos_saida"] = len(C)
     etapa("normais_componentes_gravacao")
-    rel["motor"] = MOTOR
-    rel["threads_cpu"] = WORKERS
+    rel["motor"] = "cuda" if gpu.em_gpu() else "cpu (REVO_PERMITIR_CPU)"
     rel["tempos_s"] = tempos
     rel["segundos"] = round(time.time() - t0)
     json.dump(rel, open(os.path.join(a.saida, "relatorio.json"), "w"), indent=1, default=float)

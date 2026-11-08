@@ -14,6 +14,7 @@ Avaliar um Merge Alignment feito no Revo (sem abrir o Revo): pipeline/avaliar_me
 Regras: cada importacao em GRUPO NOVO; sessao do Revo em ingles (a automacao o inicia com LANG=en_US);
 nao mexer no mouse durante comandos [mouse].
 """
+
 import argparse
 import glob
 import json
@@ -21,12 +22,12 @@ import os
 import sys
 import time
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import revo_ui as R
 
 
 def _ui_existente():
     import psutil
+
     for p in psutil.process_iter(["name"]):
         if p.info["name"] == "RevoScan6.exe":
             return R.RevoUI(p.pid)
@@ -43,7 +44,12 @@ def cmd_status(a):
     print("janela:", w.window_text())
     textos = {d.window_text() for d in w.descendants(control_type="Text")}
     botoes = {d.window_text() for d in w.descendants(control_type="Button")}
-    print("lingua:", "ingles" if ("Load Project" in textos or "File" in botoes or "Fusion" in botoes) else "outra (sessao do usuario?)")
+    print(
+        "lingua:",
+        "ingles"
+        if ("Load Project" in textos or "File" in botoes or "Fusion" in botoes)
+        else "outra (sessao do usuario?)",
+    )
     if "Fusion" in botoes:
         print("tela: scan aberto (Fusion/Meshing visiveis)")
     else:
@@ -73,7 +79,7 @@ def cmd_biblioteca(a):
             pcs = [os.path.basename(x) for x in glob.glob(os.path.join(pasta, "pointclouds", "*.ply"))]
             linhas.append((os.path.getmtime(f), d, nome, guid, pcs))
     linhas.sort(reverse=True)
-    for t, d, nome, guid, pcs in linhas[:a.limite]:
+    for t, d, nome, guid, pcs in linhas[: a.limite]:
         print(time.strftime("%Y-%m-%d %H:%M", time.localtime(t)), d, nome, guid[:8], pcs)
 
 
@@ -81,8 +87,9 @@ def cmd_importar(a):
     ui = R.RevoUI.abrir()
     ui.novo_grupo(a.grupo)
     achados = ui.carregar_projeto(os.path.abspath(a.revo))
-    if ui._contagem() < len(achados):          # a grade do grupo nao se atualiza sozinha apos o Load Project
-        ui.entrar_grupo("Ungrouped"); ui.entrar_grupo(a.grupo)
+    if ui._contagem() < len(achados):  # a grade do grupo nao se atualiza sozinha apos o Load Project
+        ui.entrar_grupo("Ungrouped")
+        ui.entrar_grupo(a.grupo)
     print("grupo:", a.grupo)
     for nome, pasta in sorted(achados.items()):
         print(" ", nome, pasta)
@@ -122,9 +129,13 @@ def _listar_controles(ui):
     for w in ui.ds.windows(process=ui.pid):
         print("JANELA", repr(w.window_text()), w.class_name(), w.rectangle())
         for d in w.descendants():
-            t = d.window_text(); ct = d.element_info.control_type
-            if d.is_visible() and ct in ("Button", "Text", "CheckBox", "ListItem", "RadioButton", "TabItem", "Edit", "ComboBox") \
-                    and (t or ct in ("CheckBox", "Edit")):
+            t = d.window_text()
+            ct = d.element_info.control_type
+            if (
+                d.is_visible()
+                and ct in ("Button", "Text", "CheckBox", "ListItem", "RadioButton", "TabItem", "Edit", "ComboBox")
+                and (t or ct in ("CheckBox", "Edit"))
+            ):
                 print("  ", repr(t), ct, d.element_info.class_name, d.rectangle())
 
 
@@ -163,22 +174,41 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("status", help="estado do Revo (sem mouse)").set_defaults(f=cmd_status)
-    p = sub.add_parser("captura", help="imagem da janela (sem mouse)"); p.add_argument("saida"); p.set_defaults(f=cmd_captura)
+    p = sub.add_parser("captura", help="imagem da janela (sem mouse)")
+    p.add_argument("saida")
+    p.set_defaults(f=cmd_captura)
     p = sub.add_parser("biblioteca-scans", help="scans/merges da biblioteca por data (sem Revo)")
-    p.add_argument("--nome"); p.add_argument("--limite", type=int, default=30); p.set_defaults(f=cmd_biblioteca)
+    p.add_argument("--nome")
+    p.add_argument("--limite", type=int, default=30)
+    p.set_defaults(f=cmd_biblioteca)
     p = sub.add_parser("importar", help="[mouse] grupo novo + Load Project")
-    p.add_argument("revo"); p.add_argument("--grupo", required=True); p.set_defaults(f=cmd_importar)
-    p = sub.add_parser("grupo", help="[mouse] entra num grupo"); p.add_argument("nome"); p.set_defaults(f=cmd_grupo)
+    p.add_argument("revo")
+    p.add_argument("--grupo", required=True)
+    p.set_defaults(f=cmd_importar)
+    p = sub.add_parser("grupo", help="[mouse] entra num grupo")
+    p.add_argument("nome")
+    p.set_defaults(f=cmd_grupo)
     p = sub.add_parser("abrir-scan", help="[mouse] abre um scan")
-    p.add_argument("nome", help="nome do cartao/revox, ex. 20261108_094322_COPIA"); p.add_argument("--grupo"); p.set_defaults(f=cmd_abrir_scan)
+    p.add_argument("nome", help="nome do cartao/revox, ex. 20261108_094322_COPIA")
+    p.add_argument("--grupo")
+    p.set_defaults(f=cmd_abrir_scan)
     p = sub.add_parser("fundir", help="[mouse] abre, grava parametros, funde (e malha/exporta)")
-    p.add_argument("nome"); p.add_argument("--grupo"); p.add_argument("--ponto", type=float)
-    p.add_argument("--malha", choices=list(R.MALHA_MODO)); p.add_argument("--grade", type=float)
-    p.add_argument("--exportar", help="pasta de saida dos .ply"); p.set_defaults(f=cmd_fundir)
-    p = sub.add_parser("tela", help="lista controles visiveis (sem mouse)"); p.add_argument("--captura"); p.set_defaults(f=cmd_tela)
+    p.add_argument("nome")
+    p.add_argument("--grupo")
+    p.add_argument("--ponto", type=float)
+    p.add_argument("--malha", choices=list(R.MALHA_MODO))
+    p.add_argument("--grade", type=float)
+    p.add_argument("--exportar", help="pasta de saida dos .ply")
+    p.set_defaults(f=cmd_fundir)
+    p = sub.add_parser("tela", help="lista controles visiveis (sem mouse)")
+    p.add_argument("--captura")
+    p.set_defaults(f=cmd_tela)
     p = sub.add_parser("clicar", help="[mouse] clica num controle pelo texto e lista a tela seguinte")
-    p.add_argument("texto"); p.add_argument("--grupo"); p.add_argument("--espera", type=float, default=3.0)
-    p.add_argument("--captura"); p.set_defaults(f=cmd_clicar)
+    p.add_argument("texto")
+    p.add_argument("--grupo")
+    p.add_argument("--espera", type=float, default=3.0)
+    p.add_argument("--captura")
+    p.set_defaults(f=cmd_clicar)
     sub.add_parser("fechar", help="fecha o Revo").set_defaults(f=cmd_fechar)
     a = ap.parse_args()
     a.f(a)

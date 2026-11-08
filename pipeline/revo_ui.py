@@ -15,6 +15,7 @@ janela RvMessageBox "Model Export Complete". Os paineis de Fusion/Meshing sao QM
 aparece na arvore UIA, entao o Apply e clicado por posicao relativa ao menu (rodape - 32 px).
 Requer: pip install pywinauto pillow. Usa o mouse real (click_input): nao mexa no PC durante a execucao.
 """
+
 import json
 import os
 import re
@@ -39,26 +40,32 @@ def manter_tela_ativa():
     (como Win+D); `restaurar_janelas()` desfaz. Com tela de bloqueio com senha nada disso basta."""
     global _MINIMIZOU
     import ctypes
+
     ES_CONTINUOUS, ES_SYSTEM, ES_DISPLAY = 0x80000000, 0x1, 0x2
     u = ctypes.windll.user32
     ctypes.windll.kernel32.SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM | ES_DISPLAY)
-    for dx in (1, -1):                                         # movimento de 1 px e volta: liga o monitor
-        u.mouse_event(0x0001, dx, 0, 0, 0)                     # MOUSEEVENTF_MOVE relativo
+    for dx in (1, -1):  # movimento de 1 px e volta: liga o monitor
+        u.mouse_event(0x0001, dx, 0, 0, 0)  # MOUSEEVENTF_MOVE relativo
         time.sleep(0.3)
     time.sleep(2)
     if not u.SetCursorPos(*_posicao_cursor()):
-        subprocess.run(["powershell", "-NoProfile", "-c", "(New-Object -ComObject Shell.Application).MinimizeAll()"],
-                       capture_output=True)
+        subprocess.run(
+            ["powershell", "-NoProfile", "-c", "(New-Object -ComObject Shell.Application).MinimizeAll()"],
+            capture_output=True,
+        )
         _MINIMIZOU = True
         time.sleep(2)
         if not u.SetCursorPos(*_posicao_cursor()):
-            raise RuntimeError("o mouse nao responde (tela de bloqueio ou janela elevada em foco); "
-                               "desbloqueie/feche a janela e rode de novo")
+            raise RuntimeError(
+                "o mouse nao responde (tela de bloqueio ou janela elevada em foco); "
+                "desbloqueie/feche a janela e rode de novo"
+            )
 
 
 def _posicao_cursor():
     import ctypes
     from ctypes import wintypes
+
     p = wintypes.POINT()
     ctypes.windll.user32.GetCursorPos(ctypes.byref(p))
     return p.x, p.y
@@ -68,8 +75,10 @@ def restaurar_janelas():
     """Desfaz o MinimizeAll feito por `manter_tela_ativa`."""
     global _MINIMIZOU
     if _MINIMIZOU:
-        subprocess.run(["powershell", "-NoProfile", "-c", "(New-Object -ComObject Shell.Application).UndoMinimizeAll()"],
-                       capture_output=True)
+        subprocess.run(
+            ["powershell", "-NoProfile", "-c", "(New-Object -ComObject Shell.Application).UndoMinimizeAll()"],
+            capture_output=True,
+        )
         _MINIMIZOU = False
 
 
@@ -85,7 +94,7 @@ class LogRevo:
         t0 = time.time()
         while time.time() - t0 < timeout:
             if os.path.exists(self.caminho):
-                if os.path.getsize(self.caminho) < self.pos:                  # rotacionou
+                if os.path.getsize(self.caminho) < self.pos:  # rotacionou
                     self.pos = 0
                 with open(self.caminho, "rb") as f:
                     f.seek(self.pos)
@@ -93,7 +102,7 @@ class LogRevo:
                 texto = novo.decode("utf-8", "replace")
                 m = rx.search(texto)
                 if m:
-                    self.pos += len(texto[:m.end()].encode("utf-8"))      # proxima espera comeca depois deste achado
+                    self.pos += len(texto[: m.end()].encode("utf-8"))  # proxima espera comeca depois deste achado
                     return m
             time.sleep(passo)
         raise TimeoutError(msg)
@@ -122,8 +131,11 @@ def revox_no_grupo(grupo, nome):
 
 def pasta_mais_recente(guid):
     """Pasta da biblioteca com o .revox mais novo para `guid` (a importacao mais recente)."""
-    achados = [os.path.join(BIBLIOTECA, d) for d in os.listdir(BIBLIOTECA)
-               if os.path.exists(os.path.join(BIBLIOTECA, d, guid + ".revox"))]
+    achados = [
+        os.path.join(BIBLIOTECA, d)
+        for d in os.listdir(BIBLIOTECA)
+        if os.path.exists(os.path.join(BIBLIOTECA, d, guid + ".revox"))
+    ]
     if not achados:
         raise FileNotFoundError(f"scan {guid} nao esta na biblioteca do Revo")
     return max(achados, key=lambda p: os.path.getmtime(os.path.join(p, guid + ".revox")))
@@ -133,8 +145,17 @@ MALHA_MODO = {"rapida": 0, "alta": 1}
 OTIMIZAR = {"nenhum": 0, "baixo": 1, "alto": 2}
 
 
-def parametros(guid, ponto_mm=None, malha=None, otimizar=None, grade_mm=None, furos=None,
-               marcadores=None, isolados=None, revox=None):
+def parametros(
+    guid,
+    ponto_mm=None,
+    malha=None,
+    otimizar=None,
+    grade_mm=None,
+    furos=None,
+    marcadores=None,
+    isolados=None,
+    revox=None,
+):
     """Grava, no .revox da biblioteca, os valores que o painel de Fusion/Meshing mostra ao abrir o scan.
     O Revo le o arquivo na 1a vez que carrega o scan na sessao e reaproveita o estado se o scan for
     reaberto na mesma sessao; grave antes de abrir e nao regrave um scan ja aberto.
@@ -167,7 +188,9 @@ def parametros(guid, ponto_mm=None, malha=None, otimizar=None, grade_mm=None, fu
         t["enableClearMarker"] = bool(marcadores)
     if isolados is not None:
         t["enableExtractIsolation"] = bool(isolados)
-        t["enableEraseIsolatedPoint"] = bool(isolados)     # os dois: com so um deles o interruptor do painel continua ligado
+        t["enableEraseIsolatedPoint"] = bool(
+            isolados
+        )  # os dois: com so um deles o interruptor do painel continua ligado
     with open(p, "w", encoding="utf-8") as f:
         json.dump(d, f, indent=4, ensure_ascii=False)
     return p
@@ -183,16 +206,21 @@ class RevoUI:
     @classmethod
     def abrir(cls, exe=EXE, espera=40):
         import psutil
+
         manter_tela_ativa()
         for p in psutil.process_iter(["name"]):
             if p.info["name"] == "RevoScan6.exe":
                 if cls._travado(p.pid):
-                    raise RuntimeError(f"Revo Scan (pid {p.pid}) nao responde; feche-o (taskkill /F /PID {p.pid}) e rode de novo")
+                    raise RuntimeError(
+                        f"Revo Scan (pid {p.pid}) nao responde; feche-o (taskkill /F /PID {p.pid}) e rode de novo"
+                    )
                 ui = cls(p.pid)
                 abas = [d.window_text() for d in ui.principal.descendants(control_type="TabItem")]
-                if abas and "File" not in abas:     # sessao aberta pelo usuario em outra lingua: nao mexer nela
-                    raise RuntimeError("ja ha um Revo Scan aberto fora do ingles (sessao do usuario?); "
-                                       "feche-o para a automacao iniciar o seu proprio")
+                if abas and "File" not in abas:  # sessao aberta pelo usuario em outra lingua: nao mexer nela
+                    raise RuntimeError(
+                        "ja ha um Revo Scan aberto fora do ingles (sessao do usuario?); "
+                        "feche-o para a automacao iniciar o seu proprio"
+                    )
                 return ui
         # a lingua do Revo vem do ambiente de quem o inicia (QLocale): os rotulos procurados aqui sao os em ingles
         env = dict(os.environ, LANG="en_US.UTF-8", LC_ALL="en_US.UTF-8")
@@ -208,6 +236,7 @@ class RevoUI:
 
     def vivo(self):
         import psutil
+
         return psutil.pid_exists(self.pid)
 
     @staticmethod
@@ -215,6 +244,7 @@ class RevoUI:
         """True se alguma janela do processo esta 'Nao respondendo' (IsHungAppWindow)."""
         import ctypes
         from ctypes import wintypes
+
         achou = []
         enum = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
 
@@ -224,6 +254,7 @@ class RevoUI:
             if p.value == pid and ctypes.windll.user32.IsHungAppWindow(h):
                 achou.append(h)
             return True
+
         ctypes.windll.user32.EnumWindows(enum(cb), 0)
         return bool(achou)
 
@@ -231,9 +262,10 @@ class RevoUI:
         """Fecha o Revo como o botao X (WM_CLOSE na janela principal), para ele gravar o que tem pendente.
         `taskkill` sem /F nao fecha com scan aberto; o close() da janela fecha."""
         import psutil
+
         try:
             self.principal.close()
-        except Exception:
+        except Exception:  # Isola falhas de backend/automacao ou de um item do lote.
             subprocess.run(["taskkill", "/PID", str(self.pid)], capture_output=True)
         try:
             psutil.Process(self.pid).wait(espera)
@@ -268,7 +300,7 @@ class RevoUI:
             try:
                 if cond():
                     return time.time() - t0
-            except Exception:
+            except Exception:  # Isola falhas de backend/automacao ou de um item do lote.
                 pass
             time.sleep(passo)
         raise TimeoutError(msg)
@@ -279,18 +311,24 @@ class RevoUI:
     # ---------------------------------------------------------------- biblioteca
     def biblioteca(self):
         from pywinauto.keyboard import send_keys
-        send_keys("{ESC}")                                     # painel de Fusion/Meshing aberto
+
+        send_keys("{ESC}")  # painel de Fusion/Meshing aberto
         time.sleep(0.5)
         self._fechar_avisos()
         for d in self.principal.descendants(control_type="TabItem"):
             if d.window_text() == "File":
                 d.click_input()
         try:
-            self._esperar(lambda: any(d.window_text() == "Load Project" for d in self.principal.descendants(control_type="Text")),
-                          15, msg="biblioteca nao apareceu")
-        except TimeoutError:
+            self._esperar(
+                lambda: any(d.window_text() == "Load Project" for d in self.principal.descendants(control_type="Text")),
+                15,
+                msg="biblioteca nao apareceu",
+            )
+        except TimeoutError as exc:
             if any(d.window_text() == "Carregar projeto" for d in self.principal.descendants(control_type="Text")):
-                raise RuntimeError("Revo esta em portugues; feche-o e deixe a automacao inicia-lo (LANG=en_US)")
+                raise RuntimeError(
+                    "Revo esta em portugues; feche-o e deixe a automacao inicia-lo (LANG=en_US)"
+                ) from exc
             raise
 
     def novo_grupo(self, nome, timeout=20):
@@ -316,21 +354,29 @@ class RevoUI:
         for lista in self.principal.descendants(control_type="List"):
             if lista.element_info.automation_id.endswith(".GroupListView"):
                 from pywinauto.keyboard import send_keys
+
                 lista.click_input()
                 send_keys("{END}")
                 break
-        self._esperar(lambda: any(d.window_text() == nome for d in self.principal.descendants(control_type="ListItem")),
-                      timeout, 0.5, f"grupo {nome!r} nao apareceu")
+        self._esperar(
+            lambda: any(d.window_text() == nome for d in self.principal.descendants(control_type="ListItem")),
+            timeout,
+            0.5,
+            f"grupo {nome!r} nao apareceu",
+        )
         # A lista se reorganiza depois de criar o grupo; um clique unico pode
         # atingir outro item. Reusar a selecao com verificacao pelo log.
-        if self.grupo_atual()!=nome:
+        if self.grupo_atual() != nome:
             self.entrar_grupo(nome, timeout=timeout)
         self._esperar(lambda: self._contagem() == 0, timeout, 0.5, f"grupo {nome!r} nao abriu vazio")
 
     def grupos(self):
         """Nomes dos grupos da biblioteca (coluna da esquerda). Nao usa o mouse."""
-        return [d.window_text() for d in self.principal.descendants(control_type="ListItem")
-                if d.window_text() not in ("false", "true") and d.is_visible()]
+        return [
+            d.window_text()
+            for d in self.principal.descendants(control_type="ListItem")
+            if d.window_text() not in ("false", "true") and d.is_visible()
+        ]
 
     def limpar_busca(self):
         """Esvazia a caixa 'Search Scan Files'. O Revo GUARDA o texto da busca entre sessoes: depois de reiniciar,
@@ -361,13 +407,15 @@ class RevoUI:
         self.biblioteca()
         self.limpar_busca()
         for _ in range(tentativas):
-            time.sleep(2)                          # deixa a lista assentar
-            item = next((d for d in self.principal.descendants(control_type="ListItem") if d.window_text() == nome), None)
+            time.sleep(2)  # deixa a lista assentar
+            item = next(
+                (d for d in self.principal.descendants(control_type="ListItem") if d.window_text() == nome), None
+            )
             if item is None:
                 raise LookupError(f"grupo {nome!r} nao existe; grupos: {self.grupos()}")
             try:
                 item.iface_selection_item.Select()
-            except Exception:
+            except Exception:  # Isola falhas de backend/automacao ou de um item do lote.
                 item.click_input()
             time.sleep(2)
             if self.grupo_atual() == nome:
@@ -377,6 +425,7 @@ class RevoUI:
     def captura(self, arquivo):
         """Salva a imagem da janela do Revo (para conferir o estado sem perguntar ao usuario)."""
         from PIL import ImageGrab
+
         r = self.principal.rectangle()
         ImageGrab.grab(bbox=(r.left, r.top, r.right, r.bottom), all_screens=True).save(arquivo)
         return arquivo
@@ -399,7 +448,11 @@ class RevoUI:
                 time.sleep(1)
 
     def _esperar_dialogo(self, titulo, timeout=20):
-        self._esperar(lambda: self.w32.window(title=titulo, class_name="#32770").exists(), timeout, msg=f"dialogo {titulo!r} nao abriu")
+        self._esperar(
+            lambda: self.w32.window(title=titulo, class_name="#32770").exists(),
+            timeout,
+            msg=f"dialogo {titulo!r} nao abriu",
+        )
         return self.w32.window(title=titulo, class_name="#32770")
 
     def carregar_projeto(self, revo, timeout=120):
@@ -407,7 +460,9 @@ class RevoUI:
         Devolve {guid: pasta do scan na biblioteca} so para o que acabou de entrar (a biblioteca pode ter
         outros scans com o mesmo guid, de importacoes anteriores ou do original)."""
         self.biblioteca()
-        next(d for d in self.principal.descendants(control_type="Edit") if d.is_visible()).set_edit_text("")  # filtro antigo
+        next(d for d in self.principal.descendants(control_type="Edit") if d.is_visible()).set_edit_text(
+            ""
+        )  # filtro antigo
         dados = os.path.join(os.path.dirname(os.path.abspath(revo)), "data")
         # a pasta de marcadores (no type 5, ex.: Frame...) nao vira scan na biblioteca: nao conta
         nos = json.load(open(os.path.abspath(revo), encoding="utf-8")).get("nodes", [])
@@ -422,14 +477,14 @@ class RevoUI:
             edit = dlg.child_window(class_name="ComboBoxEx32").child_window(class_name="Edit")
             edit.set_edit_text(caminho)
             time.sleep(0.7)
-            if edit.window_text() != caminho:          # o autocompletar do Windows ja alterou o texto
+            if edit.window_text() != caminho:  # o autocompletar do Windows ja alterou o texto
                 continue
             dlg.child_window(class_name="Button", title_re=r"&?Abrir|&?Open").click()
             try:
                 self._esperar(lambda: not dlg.exists(), 5, 0.3)
                 break
             except TimeoutError:
-                self._limpar_dialogos("Load Project", fechar_seletor=False)     # "arquivo nao encontrado"
+                self._limpar_dialogos("Load Project", fechar_seletor=False)  # "arquivo nao encontrado"
         else:
             raise RuntimeError("nao consegui abrir o arquivo no dialogo Load Project")
 
@@ -440,8 +495,9 @@ class RevoUI:
                     if f.endswith(".revox"):
                         achados[f[:-6]] = os.path.join(BIBLIOTECA, d)
             return achados
+
         self._esperar(lambda: len(novos()) >= esperados, timeout, msg="scans nao entraram na biblioteca")
-        time.sleep(3)                      # o Revo ainda grava miniatura/indice depois de criar a pasta
+        time.sleep(3)  # o Revo ainda grava miniatura/indice depois de criar a pasta
         return novos()
 
     def abrir_scan(self, nome, pasta=None, timeout=1200, grupo=None):
@@ -450,7 +506,7 @@ class RevoUI:
         Com `pasta` (a que `carregar_projeto` devolveu), confere pelo log do Revo que foi essa que abriu.
         Com `grupo`, entra nele antes (nomes de scan se repetem entre importacoes)."""
         if grupo:
-            self.entrar_grupo(grupo)               # ja limpa a busca antes de clicar no grupo
+            self.entrar_grupo(grupo)  # ja limpa a busca antes de clicar no grupo
         else:
             self.biblioteca()
             self.limpar_busca()
@@ -463,20 +519,26 @@ class RevoUI:
             raise RuntimeError(f"saiu do grupo {grupo!r} antes de abrir (atual: {self.grupo_atual()!r})")
         log = LogRevo()
         # 1o cartao da grade (ListItem com a miniatura); a posicao fixa antiga dependia do tamanho da janela
-        cartoes = [d for d in self.principal.descendants(control_type="ListItem")
-                   if d.is_visible() and d.window_text() in ("false", "true")]
+        cartoes = [
+            d
+            for d in self.principal.descendants(control_type="ListItem")
+            if d.is_visible() and d.window_text() in ("false", "true")
+        ]
         if cartoes:
             c = min(cartoes, key=lambda d: (d.rectangle().top, d.rectangle().left)).rectangle()
             alvo = ((c.left + c.right) // 2, c.top + (c.bottom - c.top) // 3)
         else:
             r = self.principal.rectangle()
             alvo = (r.left + 580, r.top + 420)
-        mouse.double_click(coords=alvo)                                         # miniatura do 1o cartao
+        mouse.double_click(coords=alvo)  # miniatura do 1o cartao
         aberto = log.esperar(r"Project opened:(.+?\.revox)", timeout, "scan nao abriu").group(1)
         if pasta and os.path.normcase(os.path.dirname(aberto)) != os.path.normcase(os.path.abspath(pasta)):
             raise RuntimeError(f"abriu {aberto}, esperava a pasta {pasta}")
-        self._esperar(lambda: any(d.window_text() == "Fusion" for d in self.principal.descendants(control_type="Button")),
-                      timeout, msg="scan nao abriu")
+        self._esperar(
+            lambda: any(d.window_text() == "Fusion" for d in self.principal.descendants(control_type="Button")),
+            timeout,
+            msg="scan nao abriu",
+        )
         return os.path.dirname(aberto)
 
     # ---------------------------------------------------------------- etapas
@@ -488,24 +550,32 @@ class RevoUI:
     def _posicao_apply(self, tentativas=5):
         import numpy as np
         from PIL import ImageGrab
+
         for _ in range(tentativas):
             r = self.principal.rectangle()
-            a = np.asarray(ImageGrab.grab(bbox=(r.left, r.top, r.right, r.bottom), all_screens=True).convert("RGB")).astype(int)
-            m = (abs(a[:, :, 0] - self.AZUL[0]) < 20) & (abs(a[:, :, 1] - self.AZUL[1]) < 15) & (abs(a[:, :, 2] - self.AZUL[2]) < 15)
+            a = np.asarray(
+                ImageGrab.grab(bbox=(r.left, r.top, r.right, r.bottom), all_screens=True).convert("RGB")
+            ).astype(int)
+            m = (
+                (abs(a[:, :, 0] - self.AZUL[0]) < 20)
+                & (abs(a[:, :, 1] - self.AZUL[1]) < 15)
+                & (abs(a[:, :, 2] - self.AZUL[2]) < 15)
+            )
             linhas = np.flatnonzero(m.sum(axis=1) >= 150)
             if len(linhas):
                 grupos = np.split(linhas, np.flatnonzero(np.diff(linhas) > 1) + 1)
                 for g in grupos:
                     if 20 <= len(g) <= 45:
-                        cols = np.flatnonzero(m[g[0]:g[-1] + 1].any(axis=0))
+                        cols = np.flatnonzero(m[g[0] : g[-1] + 1].any(axis=0))
                         return r.left + (cols[0] + cols[-1]) // 2, r.top + (g[0] + g[-1]) // 2
             time.sleep(0.5)
         raise LookupError("botao Apply nao apareceu na tela")
 
     def _apply_do_painel(self, botao):
         from pywinauto.keyboard import send_keys
-        for _ in range(3):                 # o 1o clique pode cair enquanto o Revo ainda carrega o scan
-            send_keys("{ESC}")                                 # fecha painel que tenha ficado aberto
+
+        for _ in range(3):  # o 1o clique pode cair enquanto o Revo ainda carrega o scan
+            send_keys("{ESC}")  # fecha painel que tenha ficado aberto
             time.sleep(1)
             b = self._botao(botao)
             if not b.is_enabled():
@@ -529,34 +599,49 @@ class RevoUI:
         self._apply_do_painel("Fusion")
         usado = log.esperar(r"point cloud fuse with pointPitch: ([\d.]+)", 30, "fusao nao comecou")
         fim = log.esperar(r"point cloud fuse end, duration: (\d+)", timeout, "fusao nao terminou")
-        linha=usado.string[usado.start():].splitlines()[0]
-        otim=re.search(r"optimizePose:\s*(\d+)",linha)
-        return {"ponto_mm": float(usado.group(1)), "ms": int(fim.group(1)),
-                "otimizar_poses":int(otim.group(1)) if otim else None}
+        linha = usado.string[usado.start() :].splitlines()[0]
+        otim = re.search(r"optimizePose:\s*(\d+)", linha)
+        return {
+            "ponto_mm": float(usado.group(1)),
+            "ms": int(fim.group(1)),
+            "otimizar_poses": int(otim.group(1)) if otim else None,
+        }
 
     def malha(self, timeout=3600):
         """Edit > Meshing > Apply com o modo/valores que o painel mostra (veja `parametros`)."""
         log = LogRevo()
         self._apply_do_painel("Meshing")
-        usado = log.esperar(r"meshingHelper\] - meshMode:(\d), optimizeLevel:(\d), fillHoleEnabled:(\d), "
-                            r"maxHoleAreaRatio:[\d.]+, meshEdgeLength:([\d.]+)", 30, "malha nao comecou")
+        usado = log.esperar(
+            r"meshingHelper\] - meshMode:(\d), optimizeLevel:(\d), fillHoleEnabled:(\d), "
+            r"maxHoleAreaRatio:[\d.]+, meshEdgeLength:([\d.]+)",
+            30,
+            "malha nao comecou",
+        )
         fim = log.esperar(r"triMesh meshing end, duration: (\d+), result: (-?\d+)", timeout, "malha nao terminou")
         if int(fim.group(2)) != 0:
             raise RuntimeError(f"malha falhou (result {fim.group(2)})")
         modo, otim, furos, grade = usado.groups()
-        return {"modo": int(modo), "otimizar": int(otim), "furos": bool(int(furos)), "grade_mm": float(grade),
-                "ms": int(fim.group(1))}
+        return {
+            "modo": int(modo),
+            "otimizar": int(otim),
+            "furos": bool(int(furos)),
+            "grade_mm": float(grade),
+            "ms": int(fim.group(1)),
+        }
 
     def exportar(self, pasta, prefixos=("Fused", "Mesh"), timeout=600):
         """Export Model (.ply): marca na lista do dialogo, para cada prefixo, o item mais recente (maior
         contador no nome do Revo: 'Fused 1021_3 (0.50mm)', 'Mesh 1021_2'). Itens importados do projeto
         ('fuse', 'fuse_mesh') ficam de fora. Devolve os arquivos criados."""
         from pywinauto.keyboard import send_keys
+
         pasta = os.path.abspath(pasta)
         os.makedirs(pasta, exist_ok=True)
         antes = set(os.listdir(pasta))
-        send_keys("{ESC}")                                     # painel de malha/fusao pode ter ficado aberto
-        self._esperar(lambda: not self._travado(self.pid), 300, 2.0, "Revo nao voltou a responder")   # malha grande: a tela demora
+        send_keys("{ESC}")  # painel de malha/fusao pode ter ficado aberto
+        self._esperar(
+            lambda: not self._travado(self.pid), 300, 2.0, "Revo nao voltou a responder"
+        )  # malha grande: a tela demora
         time.sleep(2)
         self._botao("Export Model").click_input()
         self._esperar(lambda: self._botao("Confirm"), 90, 0.5, "dialogo de exportacao nao abriu")
@@ -566,32 +651,38 @@ class RevoUI:
             nome = d.window_text()
             if d.is_visible() and "TextureExportDialog" in d.element_info.automation_id and nome.startswith(prefixos):
                 n = re.search(r"_(\d+)", nome)
-                chave = (int(n.group(1)) if n else 0)
+                chave = int(n.group(1)) if n else 0
                 pref = next(p for p in prefixos if nome.startswith(p))
                 if pref not in melhor or chave > melhor[pref][0]:
                     melhor[pref] = (chave, d)
         if len(melhor) != len(prefixos):
-            raise RuntimeError(f"esperava itens {prefixos} para exportar e achei {[v[1].window_text() for v in melhor.values()]}")
+            raise RuntimeError(
+                f"esperava itens {prefixos} para exportar e achei {[v[1].window_text() for v in melhor.values()]}"
+            )
         marcados = []
         for _, d in melhor.values():
             r = d.rectangle()
-            mouse.click(coords=(r.left + 12, (r.top + r.bottom) // 2))           # caixa de marcar, borda esquerda da linha
+            mouse.click(coords=(r.left + 12, (r.top + r.bottom) // 2))  # caixa de marcar, borda esquerda da linha
             marcados.append(d.window_text())
             time.sleep(0.4)
         self._botao("Confirm").click_input()
         dlg = self._esperar_dialogo("Export Model").wrapper_object()
         ed = next(d for d in dlg.descendants() if d.class_name() == "Edit" and d.is_visible())
-        botao = next(d for d in dlg.descendants() if d.class_name() == "Button" and d.window_text() == "Selecionar pasta")
+        botao = next(
+            d for d in dlg.descendants() if d.class_name() == "Button" and d.window_text() == "Selecionar pasta"
+        )
         for _ in range(4):
             time.sleep(1)
             ed.set_edit_text(pasta)
             time.sleep(0.7)
-            if ed.window_text() != pasta:                      # autocompletar do Windows alterou o texto
+            if ed.window_text() != pasta:  # autocompletar do Windows alterou o texto
                 continue
             for clique in (botao.click_input, botao.click):
                 clique()
                 try:
-                    self._esperar(lambda: not self.w32.window(title="Export Model", class_name="#32770").exists(), 5, 0.3)
+                    self._esperar(
+                        lambda: not self.w32.window(title="Export Model", class_name="#32770").exists(), 5, 0.3
+                    )
                     break
                 except TimeoutError:
                     continue

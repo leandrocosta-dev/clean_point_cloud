@@ -10,13 +10,18 @@ PASTA/<scan>/. O original nunca e tocado. Opcoes da limpeza: --periferia-mm/--pe
 --periferia-alargue/--jobs. Opcoes do Revo: --ponto, --malha, --otimizar, --grade, --furos, --marcadores,
 --manter-isolados, --scans. Nao mexa no mouse durante a etapa 2.
 """
+
 import argparse
 import os
 import subprocess
 import sys
 
+from comum import configurar_log
+
 AQUI = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, AQUI)
+
+
+_LOGGER = configurar_log(__name__)
 
 
 def main():
@@ -36,8 +41,11 @@ def main():
     ap.add_argument("--malha", choices=("rapida", "alta"), default="rapida")
     ap.add_argument("--otimizar", choices=("nenhum", "baixo", "alto"), default="baixo")
     ap.add_argument("--grade", type=float)
-    ap.add_argument("--so-limpar", action="store_true",
-                    help="para depois da limpeza (e da uniao, se houver): entrega so o .revo limpo, sem abrir o Revo Scan")
+    ap.add_argument(
+        "--so-limpar",
+        action="store_true",
+        help="para depois da limpeza (e da uniao, se houver): entrega so o .revo limpo, sem abrir o Revo Scan",
+    )
     ap.add_argument("--entregaveis", choices=("nuvem+malha", "nuvem", "malha"), default="nuvem+malha")
     ap.add_argument("--furos", action="store_true")
     ap.add_argument("--marcadores", action="store_true")
@@ -45,17 +53,35 @@ def main():
     ap.add_argument("--pixel-tol", type=float, default=1.0, help="limiar minimo dos pixels voadores em mm")
     ap.add_argument("--pixel-comp-min", type=int, default=30, help="area minima de componente em pixels")
     ap.add_argument("--pixel-adaptativo", action="store_true", help="filtro robusto adaptativo de pixels")
-    ap.add_argument("--modo-limpeza", choices=["precisao", "classico"], default="precisao", help="precisao protege detalhes com evidencia entre quadros")
+    ap.add_argument(
+        "--modo-limpeza",
+        choices=["precisao", "classico"],
+        default="precisao",
+        help="precisao protege detalhes com evidencia entre quadros",
+    )
     ap.add_argument("--temporal-passo", type=int, default=8, help="separacao dos quadros de evidencia")
-    ap.add_argument("--temporal-min", type=int, choices=[2, 3, 4], default=2, help="quadros necessarios para confirmar descarte")
-    ap.add_argument("--ext-max-mm", type=float, default=0.0, help="componentes maiores que X mm nunca sao a peca (placa de marcadores)")
+    ap.add_argument(
+        "--temporal-min", type=int, choices=[2, 3, 4], default=2, help="quadros necessarios para confirmar descarte"
+    )
+    ap.add_argument(
+        "--ext-max-mm",
+        type=float,
+        default=0.0,
+        help="componentes maiores que X mm nunca sao a peca (placa de marcadores)",
+    )
     ap.add_argument("--so-peca", action="store_true", help="so o componente escolhido (cena suja, peca isolada)")
     ap.add_argument("--min-mantido", type=float, help="fracao minima mantida (padrao do limpar_raw: 0,30)")
     ap.add_argument("--exclusoes", help="JSON de suportes/gabaritos a remover sempre (ver limpar_raw --exclusoes)")
-    ap.add_argument("--auto", action="store_true",
-                    help="roda triagem.py antes e usa as opcoes de limpeza que ela recomenda (as passadas aqui prevalecem)")
-    ap.add_argument("--permitir-parcial", action="store_true",
-                    help="segue para o Revo mesmo se algum scan nao foi limpo (erro/pulado/revisar)")
+    ap.add_argument(
+        "--auto",
+        action="store_true",
+        help="roda triagem.py antes e usa as opcoes de limpeza que ela recomenda (as passadas aqui prevalecem)",
+    )
+    ap.add_argument(
+        "--permitir-parcial",
+        action="store_true",
+        help="segue para o Revo mesmo se algum scan nao foi limpo (erro/pulado/revisar)",
+    )
     a = ap.parse_args()
 
     if not a.so_limpar and not a.saida_ply:
@@ -66,46 +92,88 @@ def main():
 
     if a.auto:
         from triagem import triar
+
         perfil = triar(proj, scans=a.unir or a.scans)
         rec = perfil["recomendacao"]["limpar_raw"]
-        print(f"== triagem: {perfil['recomendacao']['caso']} -> opcoes de limpeza {rec}", flush=True)
+        _LOGGER.info("%s", f"== triagem: {perfil['recomendacao']['caso']} -> opcoes de limpeza {rec}")
         padrao = ap.parse_args([a.projeto])
         for k, v in rec.items():
-            if getattr(a, k, None) == getattr(padrao, k, None):     # o usuario nao mudou: usa a recomendacao
+            if getattr(a, k, None) == getattr(padrao, k, None):  # o usuario nao mudou: usa a recomendacao
                 setattr(a, k, v)
 
-    c1 = [sys.executable, os.path.join(AQUI, "limpar_raw.py"), proj, "--saida", saida, "--sem-ply-antigos",
-          "--periferia-mm", str(a.periferia_mm), "--periferia-banda", str(a.periferia_banda),
-          "--periferia-alargue", str(a.periferia_alargue), "--jobs", str(a.jobs)]
-    c1 += ["--pixel-tol", str(a.pixel_tol), "--pixel-comp-min", str(a.pixel_comp_min),
-           "--modo-limpeza", a.modo_limpeza, "--temporal-passo", str(a.temporal_passo),
-           "--temporal-min", str(a.temporal_min), "--manter-ids", "--ext-max-mm", str(a.ext_max_mm)]
+    c1 = [
+        sys.executable,
+        os.path.join(AQUI, "limpar_raw.py"),
+        proj,
+        "--saida",
+        saida,
+        "--sem-ply-antigos",
+        "--periferia-mm",
+        str(a.periferia_mm),
+        "--periferia-banda",
+        str(a.periferia_banda),
+        "--periferia-alargue",
+        str(a.periferia_alargue),
+        "--jobs",
+        str(a.jobs),
+    ]
+    c1 += [
+        "--pixel-tol",
+        str(a.pixel_tol),
+        "--pixel-comp-min",
+        str(a.pixel_comp_min),
+        "--modo-limpeza",
+        a.modo_limpeza,
+        "--temporal-passo",
+        str(a.temporal_passo),
+        "--temporal-min",
+        str(a.temporal_min),
+        "--manter-ids",
+        "--ext-max-mm",
+        str(a.ext_max_mm),
+    ]
     if a.min_mantido is not None:
         c1 += ["--min-mantido", str(a.min_mantido)]
     if a.exclusoes:
         c1 += ["--exclusoes", os.path.abspath(a.exclusoes)]
-    for flag, on in (("--pixel-adaptativo", a.pixel_adaptativo), ("--so-peca", a.so_peca),
-                     ("--permitir-parcial", a.permitir_parcial)):
+    for flag, on in (
+        ("--pixel-adaptativo", a.pixel_adaptativo),
+        ("--so-peca", a.so_peca),
+        ("--permitir-parcial", a.permitir_parcial),
+    ):
         if on:
             c1.append(flag)
     if a.unir:
         c1 += ["--scans", *a.unir]
     elif a.scans:
         c1 += ["--scans", *a.scans]
-    print("== etapa 1: limpeza dos quadros", flush=True)
+    _LOGGER.info("%s", "== etapa 1: limpeza dos quadros")
     rc = subprocess.run(c1).returncode
     if rc == 2:
-        sys.exit("limpeza PARCIAL (scans nao limpos, ver relatorio_limpeza.json); o Revo nao foi acionado. "
-                 "Ajuste as opcoes ou use --permitir-parcial.")
+        sys.exit(
+            "limpeza PARCIAL (scans nao limpos, ver relatorio_limpeza.json); o Revo nao foi acionado. "
+            "Ajuste as opcoes ou use --permitir-parcial."
+        )
     if rc:
         sys.exit("limpeza falhou; o Revo nao foi acionado")
 
     if a.unir:
         nome = a.unir[0] + "_uniao"
         uniao = os.path.abspath(a.saida_uniao or saida + "_uniao")
-        print("== etapa 1b: uniao das partes (frames de B levados para A)", flush=True)
-        cu = [sys.executable, os.path.join(AQUI, "uniao_scans.py"), saida, "--scans", *a.unir, "--lados", a.lados,
-              "--saida", uniao, "--nome", nome]
+        _LOGGER.info("%s", "== etapa 1b: uniao das partes (frames de B levados para A)")
+        cu = [
+            sys.executable,
+            os.path.join(AQUI, "uniao_scans.py"),
+            saida,
+            "--scans",
+            *a.unir,
+            "--lados",
+            a.lados,
+            "--saida",
+            uniao,
+            "--nome",
+            nome,
+        ]
         if subprocess.run(cu).returncode:
             sys.exit("uniao falhou; o Revo nao foi acionado")
         novo = os.path.join(uniao, nome + ".revo")
@@ -116,13 +184,24 @@ def main():
     # IDs originais so sao necessarios ate a uniao. A entrega sempre recebe IDs
     # novos; as selecoes enviadas ao Revo precisam acompanhar o remapeamento.
     from preparar_importacao import reidentificar
+
     mapa = reidentificar(novo)
     if a.so_limpar:
-        print(f"== concluido sem Revo. Projeto .revo limpo: {novo}", flush=True)
+        _LOGGER.info("%s", f"== concluido sem Revo. Projeto .revo limpo: {novo}")
         sys.exit(0)
-    c2 = [sys.executable, os.path.join(AQUI, "revo_pipeline.py"), novo, "--saida", os.path.abspath(a.saida_ply),
-          "--malha", a.malha, "--otimizar", a.otimizar,
-          "--entregaveis", a.entregaveis]
+    c2 = [
+        sys.executable,
+        os.path.join(AQUI, "revo_pipeline.py"),
+        novo,
+        "--saida",
+        os.path.abspath(a.saida_ply),
+        "--malha",
+        a.malha,
+        "--otimizar",
+        a.otimizar,
+        "--entregaveis",
+        a.entregaveis,
+    ]
     for flag, v in (("--ponto", a.ponto), ("--grade", a.grade)):
         if v is not None:
             c2 += [flag, str(v)]
@@ -131,7 +210,7 @@ def main():
             c2.append(flag)
     if a.scans and not a.unir:
         c2 += ["--scans", ",".join(mapa.get(s, s) for s in a.scans)]
-    print("== etapa 2: Revo Scan (fusao, malha, exportacao)", flush=True)
+    _LOGGER.info("%s", "== etapa 2: Revo Scan (fusao, malha, exportacao)")
     sys.exit(subprocess.run(c2).returncode)
 
 

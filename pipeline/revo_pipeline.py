@@ -9,30 +9,40 @@ grade realmente usados precisam ser os pedidos, senao o scan vai marcado como di
 Saida: PASTA/<guid>/*.ply (nuvem fundida e malha) e PASTA/revo_pipeline.json.
 O mouse real ainda e usado para os cliques de abrir/Apply/exportar: nao mexa no PC durante a execucao.
 """
+
 import argparse
 import json
 import os
 import sys
 import time
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import revo_ui as R
-
+from comum import configurar_log
 
 ENTREGAVEIS = {"nuvem+malha": ("nuvem", "malha"), "nuvem": ("nuvem",), "malha": ("malha",)}
 PREFIXO = {"nuvem": "Fused", "malha": "Mesh"}
 
 
+_LOGGER = configurar_log(__name__)
+
+
 def guids_do_projeto(revo):
     dados = os.path.join(os.path.dirname(os.path.abspath(revo)), "data")
-    marcadores = {n["guid"] for n in json.load(open(os.path.abspath(revo), encoding="utf-8")).get("nodes", []) if n.get("type") == 5}
+    marcadores = {
+        n["guid"]
+        for n in json.load(open(os.path.abspath(revo), encoding="utf-8")).get("nodes", [])
+        if n.get("type") == 5
+    }
     return sorted(d for d in os.listdir(dados) if os.path.isdir(os.path.join(dados, d)) and d not in marcadores)
 
 
 def nomes_do_projeto(revo):
     """guid -> nome do no. O Revo grava o .revox da biblioteca com o NOME do no (ex.: 20261108_094322_COPIA),
     que pode ser diferente do guid (projetos limpos com ids novos)."""
-    return {n["guid"]: n.get("name") or n["guid"] for n in json.load(open(os.path.abspath(revo), encoding="utf-8")).get("nodes", [])}
+    return {
+        n["guid"]: n.get("name") or n["guid"]
+        for n in json.load(open(os.path.abspath(revo), encoding="utf-8")).get("nodes", [])
+    }
 
 
 def processar(ui, guid, pasta, args, nome=None, grupo=None):
@@ -41,7 +51,7 @@ def processar(ui, guid, pasta, args, nome=None, grupo=None):
     t0 = time.time()
     ui.abrir_scan(nome, pasta, grupo=grupo)
     if getattr(args, "so_exportar", False):
-        r["fusao"] = r["malha"] = None                 # usa o que ja esta no scan (maior contador de nome)
+        r["fusao"] = r["malha"] = None  # usa o que ja esta no scan (maior contador de nome)
     else:
         r["fusao"] = ui.fundir()
         r["malha"] = ui.malha() if "malha" in ENTREGAVEIS[args.entregaveis] else None
@@ -52,8 +62,12 @@ def processar(ui, guid, pasta, args, nome=None, grupo=None):
             ui = R.RevoUI.abrir()
             ui.abrir_scan(nome, pasta, grupo=grupo)
     prefixos = tuple(PREFIXO[e] for e in ENTREGAVEIS[getattr(args, "entregaveis", "nuvem+malha")])
-    if getattr(args, "sem_exportar", False):      # a fusao/malha fica salva no scan da biblioteca (pointclouds/)
-        r["arquivos"] = sorted(os.listdir(os.path.join(pasta, "pointclouds"))) if os.path.isdir(os.path.join(pasta, "pointclouds")) else []
+    if getattr(args, "sem_exportar", False):  # a fusao/malha fica salva no scan da biblioteca (pointclouds/)
+        r["arquivos"] = (
+            sorted(os.listdir(os.path.join(pasta, "pointclouds")))
+            if os.path.isdir(os.path.join(pasta, "pointclouds"))
+            else []
+        )
     else:
         r["arquivos"] = ui.exportar(os.path.join(args.saida, guid), prefixos=prefixos)
     r["segundos"] = round(time.time() - t0, 1)
@@ -63,7 +77,7 @@ def processar(ui, guid, pasta, args, nome=None, grupo=None):
         return r
     if args.ponto is not None and abs(r["fusao"]["ponto_mm"] - args.ponto) > 0.005:
         diverge.append(f"ponto {r['fusao']['ponto_mm']} != {args.ponto}")
-    if r["malha"] is None:                              # so a nuvem foi pedida
+    if r["malha"] is None:  # so a nuvem foi pedida
         r["divergencias"] = diverge
         return r
     if r["malha"]["modo"] != R.MALHA_MODO[args.malha]:
@@ -89,17 +103,34 @@ def main():
     ap.add_argument("--furos", action="store_true", help="Hole Filling")
     ap.add_argument("--marcadores", action="store_true", help="Remove marker points")
     ap.add_argument("--manter-isolados", action="store_true", help="desliga Remove Isolation")
-    ap.add_argument("--entregaveis", choices=list(ENTREGAVEIS), default="nuvem+malha",
-                    help="o que exportar por scan; so 'nuvem' nao gera a malha (mais rapido)")
+    ap.add_argument(
+        "--entregaveis",
+        choices=list(ENTREGAVEIS),
+        default="nuvem+malha",
+        help="o que exportar por scan; so 'nuvem' nao gera a malha (mais rapido)",
+    )
     ap.add_argument("--scans", help="guids separados por virgula (padrao: todos do projeto)")
-    ap.add_argument("--reusar", action="store_true",
-                    help="nao importa: usa a copia mais recente de cada scan na biblioteca (retomar apos falha)")
-    ap.add_argument("--so-exportar", action="store_true", help="nao funde nem gera malha: exporta o que ja existe no scan (com --reusar)")
+    ap.add_argument(
+        "--reusar",
+        action="store_true",
+        help="nao importa: usa a copia mais recente de cada scan na biblioteca (retomar apos falha)",
+    )
+    ap.add_argument(
+        "--so-exportar",
+        action="store_true",
+        help="nao funde nem gera malha: exporta o que ja existe no scan (com --reusar)",
+    )
     ap.add_argument("--fechar", action="store_true", help="fecha o Revo no fim")
-    ap.add_argument("--sem-exportar", action="store_true",
-                    help="so funde (e malha): o resultado fica salvo no scan da biblioteca, pronto para o Merge Alignment")
-    ap.add_argument("--grupo", help="nome do grupo NOVO da biblioteca onde importar (padrao: nome do .revo + hora); "
-                                     "regra do usuario: cada importacao em grupo proprio")
+    ap.add_argument(
+        "--sem-exportar",
+        action="store_true",
+        help="so funde (e malha): o resultado fica salvo no scan da biblioteca, pronto para o Merge Alignment",
+    )
+    ap.add_argument(
+        "--grupo",
+        help="nome do grupo NOVO da biblioteca onde importar (padrao: nome do .revo + hora); "
+        "regra do usuario: cada importacao em grupo proprio",
+    )
     args = ap.parse_args()
 
     guids = args.scans.split(",") if args.scans else guids_do_projeto(args.revo)
@@ -120,35 +151,48 @@ def main():
     else:
         grupo = grupo or (os.path.splitext(os.path.basename(args.revo))[0] + time.strftime("_%Y%m%d_%H%M"))
         ui.novo_grupo(grupo)
-        print("grupo:", grupo, flush=True)
-        achados = ui.carregar_projeto(args.revo)       # chave = nome do .revox (nome do no ou guid)
+        _LOGGER.info("%s %s", "grupo:", grupo)
+        achados = ui.carregar_projeto(args.revo)  # chave = nome do .revox (nome do no ou guid)
         pastas = {g: achados.get(nomes.get(g, g), achados.get(g)) for g in guids}
         pastas = {g: p for g, p in pastas.items() if p}
     faltam = [g for g in guids if g not in pastas]
     if faltam:
         sys.exit(f"scans que nao entraram na biblioteca: {faltam}")
-    for g in guids:                       # antes de abrir qualquer um: o Revo so le o .revox na 1a abertura
-        R.parametros(g, ponto_mm=args.ponto, malha=args.malha, otimizar=args.otimizar if args.malha == "rapida" else None,
-                     grade_mm=args.grade if args.malha == "alta" else None, furos=args.furos,
-                     marcadores=args.marcadores, isolados=not args.manter_isolados,
-                     revox=next(os.path.join(pastas[g], n + ".revox") for n in (nomes.get(g, g), g)
-                                if os.path.exists(os.path.join(pastas[g], n + ".revox"))))
-    relatorio = {"revo": os.path.abspath(args.revo), "parametros": {k: v for k, v in vars(args).items() if k not in ("revo", "saida")},
-                 "scans": []}
+    for g in guids:  # antes de abrir qualquer um: o Revo so le o .revox na 1a abertura
+        R.parametros(
+            g,
+            ponto_mm=args.ponto,
+            malha=args.malha,
+            otimizar=args.otimizar if args.malha == "rapida" else None,
+            grade_mm=args.grade if args.malha == "alta" else None,
+            furos=args.furos,
+            marcadores=args.marcadores,
+            isolados=not args.manter_isolados,
+            revox=next(
+                os.path.join(pastas[g], n + ".revox")
+                for n in (nomes.get(g, g), g)
+                if os.path.exists(os.path.join(pastas[g], n + ".revox"))
+            ),
+        )
+    relatorio = {
+        "revo": os.path.abspath(args.revo),
+        "parametros": {k: v for k, v in vars(args).items() if k not in ("revo", "saida")},
+        "scans": [],
+    }
     for g in guids:
         try:
-            if not ui.vivo():             # Revo reiniciado a cada scan: sessao longa acumula memoria e ja travou
+            if not ui.vivo():  # Revo reiniciado a cada scan: sessao longa acumula memoria e ja travou
                 ui = R.RevoUI.abrir()
             r = processar(ui, g, pastas[g], args, nomes.get(g, g), grupo)
-        except Exception as e:            # um scan com problema nao derruba os outros
+        except Exception as e:  # um scan com problema nao derruba os outros
             r = {"guid": g, "erro": f"{type(e).__name__}: {e}"}
             ui._fechar_avisos()
         print(json.dumps(r, ensure_ascii=False), flush=True)
         relatorio["scans"].append(r)
-        if "malha" in ENTREGAVEIS[args.entregaveis]:     # sessao longa com malha acumula memoria: reinicia
+        if "malha" in ENTREGAVEIS[args.entregaveis]:  # sessao longa com malha acumula memoria: reinicia
             try:
                 ui.fechar()
-            except Exception:
+            except Exception:  # Isola falhas de backend/automacao ou de um item do lote.
                 pass
     with open(os.path.join(args.saida, "revo_pipeline.json"), "w", encoding="utf-8") as f:
         json.dump(relatorio, f, indent=1, ensure_ascii=False)
@@ -156,7 +200,7 @@ def main():
         ui.fechar()
     R.restaurar_janelas()
     ruins = [s["guid"] for s in relatorio["scans"] if "erro" in s or s.get("divergencias")]
-    print("ok" if not ruins else f"atencao: {ruins}")
+    _LOGGER.info("%s", "ok" if not ruins else f"atencao: {ruins}")
     sys.exit(1 if ruins else 0)
 
 

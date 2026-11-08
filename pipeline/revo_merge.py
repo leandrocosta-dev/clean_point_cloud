@@ -10,14 +10,13 @@ marca a ULTIMA caixa do bloco (fusao mais nova). O manual: Feature aceita ate 9 
 Resultado: nova pasta na biblioteca com Merge_XX.revox (ver `revo_cli.py biblioteca-scans --nome Merge`), que
 `avaliar_merge_revo.py` mede.
 """
+
 import argparse
 import os
 import sys
 import time
 
 import numpy as np
-
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import revo_ui as R
 
 
@@ -30,7 +29,13 @@ def detectar(img):
     caixas = []
     y = 150
     while y < h - 20:
-        if (g[y, 48:65] > 200).all() and (g[y + 16, 48:65] > 200).all() and g[y + 8, 48] > 200 and g[y + 8, 64] > 200                 and g[y + 8, 56] < 120:
+        if (
+            (g[y, 48:65] > 200).all()
+            and (g[y + 16, 48:65] > 200).all()
+            and g[y + 8, 48] > 200
+            and g[y + 8, 64] > 200
+            and g[y + 8, 56] < 120
+        ):
             caixas.append(y + 8)
             y += 17
         else:
@@ -52,6 +57,7 @@ def main():
     ap.add_argument("--espera-preview", type=float, default=600)
     a = ap.parse_args()
     from PIL import Image, ImageGrab
+
     if a.detectar:
         b = detectar(np.asarray(Image.open(a.detectar).convert("RGB")))
         print(len(b), "scans;", [len(x) for x in b], "caixas; marcaria:", [x[-1] for x in b])
@@ -59,8 +65,9 @@ def main():
     if not a.grupo:
         sys.exit("--grupo e obrigatorio")
     from pywinauto import mouse
+
     ui = R.RevoUI.abrir()
-    try:                                   # se ficou na tela de merge de uma rodada anterior, sai dela
+    try:  # se ficou na tela de merge de uma rodada anterior, sai dela
         ui._botao("Exit Merge Alignment").click_input()
         time.sleep(2)
     except LookupError:
@@ -75,19 +82,32 @@ def main():
     r = ui.principal.rectangle()
     img = np.asarray(ImageGrab.grab(bbox=(r.left, r.top, r.right, r.bottom), all_screens=True).convert("RGB"))
     blocos = detectar(img)
-    print("scans na lista:", len(blocos), "| no grupo:", n_esperado, "| caixas por scan:", [len(x) for x in blocos], flush=True)
+    print(
+        "scans na lista:",
+        len(blocos),
+        "| no grupo:",
+        n_esperado,
+        "| caixas por scan:",
+        [len(x) for x in blocos],
+        flush=True,
+    )
     if len(blocos) != n_esperado:
         sys.exit("numero de scans na lista difere do grupo: nao marquei nada")
     if len(blocos) > 9:
         sys.exit("Feature aceita ate 9 modelos")
+
     def marcada(x, y):
         """Caixa marcada = interior colorido/numerado (o Revo pinta a caixa com a cor do modelo e o numero)."""
-        im = np.asarray(ImageGrab.grab(bbox=(r.left + x - 6, r.top + y - 6, r.left + x + 7, r.top + y + 7),
-                                       all_screens=True).convert("RGB")).astype(int)
+        im = np.asarray(
+            ImageGrab.grab(
+                bbox=(r.left + x - 6, r.top + y - 6, r.left + x + 7, r.top + y + 7), all_screens=True
+            ).convert("RGB")
+        ).astype(int)
         return im.mean() > 90
+
     for k, b in enumerate(blocos):
         x, y = b[-1]
-        for tentativa in range(3):         # o Revo ignora cliques enquanto carrega o modelo anterior
+        for tentativa in range(3):  # o Revo ignora cliques enquanto carrega o modelo anterior
             mouse.click(coords=(r.left + x, r.top + y))
             t0 = time.time()
             while time.time() - t0 < 90 and not marcada(x, y):
@@ -98,7 +118,7 @@ def main():
             sys.exit(f"nao consegui marcar a caixa do scan {k + 1} (y={y})")
         print(f"scan {k + 1}/{len(blocos)} marcado ({time.time() - t0:.0f} s)", flush=True)
         time.sleep(1)
-    log = R.LogRevo()
+    R.LogRevo()
     ui._botao("Preview the Alignment").click_input()
     t0 = time.time()
     # fim do preview: Generate Model habilita
@@ -107,9 +127,16 @@ def main():
     ui.captura(os.path.join(os.environ.get("TEMP", "."), "revo_merge_preview.png"))
     antes = set(os.listdir(R.BIBLIOTECA))
     ui._botao("Generate Model").click_input()
-    ui._esperar(lambda: any(f.endswith(".revox") and f.startswith("Merge")
-                            for d in set(os.listdir(R.BIBLIOTECA)) - antes
-                            for f in os.listdir(os.path.join(R.BIBLIOTECA, d))), 600, 2.0, "merge nao foi gravado")
+    ui._esperar(
+        lambda: any(
+            f.endswith(".revox") and f.startswith("Merge")
+            for d in set(os.listdir(R.BIBLIOTECA)) - antes
+            for f in os.listdir(os.path.join(R.BIBLIOTECA, d))
+        ),
+        600,
+        2.0,
+        "merge nao foi gravado",
+    )
     time.sleep(3)
     novo = [os.path.join(R.BIBLIOTECA, d) for d in set(os.listdir(R.BIBLIOTECA)) - antes]
     print("merge:", novo)
