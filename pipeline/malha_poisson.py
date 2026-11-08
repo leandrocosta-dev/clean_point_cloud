@@ -5,34 +5,56 @@
 Poisson fecha a superficie; o pára-choque e uma casca ABERTA, entao se descartam (a) vertices de baixa densidade
 (quantil `--quantil`) e (b) tudo a mais de `--dist-max` mm do ponto mais proximo da nuvem.
 """
-import argparse, os, sys, time
+
+import argparse
+import time
+
+import gpu
 import numpy as np
 import open3d as o3d
-from scipy.spatial import cKDTree
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from alinhar_varios import baixa_prioridade
-ap = argparse.ArgumentParser(); ap.add_argument("nuvem"); ap.add_argument("--saida", required=True)
-ap.add_argument("--profundidade", type=int, default=11); ap.add_argument("--quantil", type=float, default=0.005)
-ap.add_argument("--dist-max", type=float, default=3.0); ap.add_argument("--threads", type=int, default=8)
-a = ap.parse_args(); baixa_prioridade(); t0 = time.time()
-pc = o3d.io.read_point_cloud(a.nuvem); P = np.asarray(pc.points)
+from recursos import baixa_prioridade
+
+# CPU: Poisson, remove_*_by_mask e cluster_connected_triangles do Open3D e o reparo do MeshLib (sem equivalente na GPU).
+# GPU: distancia de cada vertice a nuvem e o quantil de densidade.
+ap = argparse.ArgumentParser()
+ap.add_argument("nuvem")
+ap.add_argument("--saida", required=True)
+ap.add_argument("--profundidade", type=int, default=11)
+ap.add_argument("--quantil", type=float, default=0.005)
+ap.add_argument("--dist-max", type=float, default=3.0)
+ap.add_argument("--threads", type=int, default=8)
+a = ap.parse_args()
+baixa_prioridade()
+t0 = time.time()
+pc = o3d.io.read_point_cloud(a.nuvem)
+P = np.asarray(pc.points)
 print(f"{len(P):,} pontos; Poisson profundidade {a.profundidade}", flush=True)
-M, dens = o3d.geometry.TriangleMesh.create_from_point_cloud_poisson(pc, depth=a.profundidade, width=0, scale=1.05, linear_fit=False, n_threads=a.threads)
-dens = np.asarray(dens); V = np.asarray(M.vertices)
-print(f"Poisson: {len(V):,} vertices, {len(M.triangles):,} triangulos ({time.time()-t0:.0f}s)", flush=True)
-d, _ = cKDTree(P).query(V, workers=4)
-rem = (dens < np.quantile(dens, a.quantil)) | (d > a.dist_max)
+M, dens = o3d.geometry.TriangleMesh.create_from_point_cloud_poisson(
+    pc, depth=a.profundidade, width=0, scale=1.05, linear_fit=False, n_threads=a.threads
+)
+dens = np.asarray(dens)
+V = np.asarray(M.vertices)
+print(f"Poisson: {len(V):,} vertices, {len(M.triangles):,} triangulos ({time.time() - t0:.0f}s)", flush=True)
+_, j = gpu.vizinho_mais_proximo(P, V, dist_max=a.dist_max)  # j = -1: nenhum ponto da nuvem a <= --dist-max
+dg = gpu.para_gpu(dens)
+rem = gpu.para_cpu((dg < gpu.xp().quantile(dg, a.quantil)) | (gpu.para_gpu(j) < 0))
 M.remove_vertices_by_mask(rem)
-M.remove_degenerate_triangles(); M.remove_unreferenced_vertices()
+M.remove_degenerate_triangles()
+M.remove_unreferenced_vertices()
 tri_cl, n_tri, area = M.cluster_connected_triangles()
-tri_cl = np.asarray(tri_cl); n_tri = np.asarray(n_tri)
+tri_cl = np.asarray(tri_cl)
+n_tri = np.asarray(n_tri)
 peq = np.isin(tri_cl, np.flatnonzero(n_tri < 2000))
-M.remove_triangles_by_mask(peq); M.remove_unreferenced_vertices()
+M.remove_triangles_by_mask(peq)
+M.remove_unreferenced_vertices()
 o3d.io.write_triangle_mesh(a.saida, M, write_vertex_normals=False)
-print(f"malha final: {len(M.vertices):,} vertices, {len(M.triangles):,} triangulos | {time.time()-t0:.0f}s")
+print(f"malha final: {len(M.vertices):,} vertices, {len(M.triangles):,} triangulos | {time.time() - t0:.0f}s")
 # validacao/reparo com MeshLib (mesmos numeros do MeshInspector): so grava a versao reparada ao lado, nunca sobrescreve
 from malha_meshlib import metricas, reparar
 from meshlib import mrmeshpy as mm
-ml = mm.loadMesh(a.saida); print("MeshLib antes :", metricas(ml))
-reparar(ml); print("MeshLib depois:", metricas(ml))
+
+ml = mm.loadMesh(a.saida)
+print("MeshLib antes :", metricas(ml))
+reparar(ml)
+print("MeshLib depois:", metricas(ml))
 mm.saveMesh(ml, a.saida.replace(".ply", "_reparada.ply"))

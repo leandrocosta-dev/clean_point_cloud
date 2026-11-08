@@ -12,6 +12,7 @@ rel 0,02 para float). `limites` vale sem base (ex.: pontos == 834686). Cada roda
 pipeline/output/regressao/ (nunca sobrescreve). Casos `caro: true` so rodam com --incluir-caros.
 Codigos: 0 ok; 1 regrediu; 2 comando falhou; 3 entrada mudou; 4 caso sem base (rode --registrar-base).
 """
+
 import argparse
 import hashlib
 import json
@@ -20,25 +21,15 @@ import subprocess
 import sys
 import time
 
+from comum import sha256
+
 AQUI = os.path.dirname(os.path.abspath(__file__))
 RAIZ = os.path.dirname(AQUI)
-sys.path.insert(0, AQUI)
 from recursos import baixa_prioridade, orcamento_threads  # noqa: E402
 
 CASOS = os.path.join(RAIZ, "bench", "casos.json")
 BASE = os.path.join(RAIZ, "bench", "base")
 RODADAS = os.path.join(RAIZ, "pipeline", "output", "regressao")
-
-
-def sha256(caminho, bloco=1 << 22):
-    h = hashlib.sha256()
-    with open(caminho, "rb") as f:
-        while True:
-            b = f.read(bloco)
-            if not b:
-                break
-            h.update(b)
-    return h.hexdigest()
 
 
 def assinatura(entrada):
@@ -48,8 +39,15 @@ def assinatura(entrada):
         return sha256(c)
     if os.path.isdir(c):
         h = hashlib.sha256()
-        datasets = sorted(os.path.join(c, "data", g, "cache", "frames.dataset") for g in os.listdir(os.path.join(c, "data"))
-                          if os.path.isfile(os.path.join(c, "data", g, "cache", "frames.dataset"))) if os.path.isdir(os.path.join(c, "data")) else []
+        datasets = (
+            sorted(
+                os.path.join(c, "data", g, "cache", "frames.dataset")
+                for g in os.listdir(os.path.join(c, "data"))
+                if os.path.isfile(os.path.join(c, "data", g, "cache", "frames.dataset"))
+            )
+            if os.path.isdir(os.path.join(c, "data"))
+            else []
+        )
         if not datasets:
             raise FileNotFoundError(f"pasta sem frames.dataset: {c}")
         for d in datasets:
@@ -100,8 +98,14 @@ def medir(spec):
     pre = spec.get("prefixo", "")
     if t in ("nuvem", "malha"):
         from metricas import medir as medir_nuvem
-        r = medir_nuvem(spec["arquivo"], spec.get("referencia"), spec.get("rugosidade", t == "malha"),
-                        spec.get("componentes", False), malha=t == "malha")
+
+        r = medir_nuvem(
+            spec["arquivo"],
+            spec.get("referencia"),
+            spec.get("rugosidade", t == "malha"),
+            spec.get("componentes", False),
+            malha=t == "malha",
+        )
         r.pop("arquivo", None)
         r.pop("referencia", None)
         return {pre + k: v for k, v in achatar(r).items()}
@@ -170,7 +174,7 @@ def rodar_caso(caso, registrar=False, raiz_rodadas=RODADAS, base_dir=BASE, log=p
     base = json.load(open(arq_base, encoding="utf-8")) if os.path.exists(arq_base) else None
     raiz = os.path.join(raiz_rodadas, time.strftime("%Y%m%d_%H%M%S") + "_" + nome)
     saida, n = raiz, 1
-    while True:                      # pasta NOVA sempre (duas rodadas no mesmo segundo ganham sufixo)
+    while True:  # pasta NOVA sempre (duas rodadas no mesmo segundo ganham sufixo)
         try:
             os.makedirs(saida)
             break
@@ -188,10 +192,12 @@ def rodar_caso(caso, registrar=False, raiz_rodadas=RODADAS, base_dir=BASE, log=p
     if base and not registrar:
         mud = {k: (v, base["entradas"].get(k)) for k, v in assin.items() if base["entradas"].get(k) not in (None, v)}
         if mud:
-            res.update(status="entrada_mudou", problemas=[f"{k}: sha {v[0][:12]} != base {v[1][:12]}" for k, v in mud.items()])
+            res.update(
+                status="entrada_mudou", problemas=[f"{k}: sha {v[0][:12]} != base {v[1][:12]}" for k, v in mud.items()]
+            )
             return res, 3
     env = dict(os.environ)
-    if caso.get("threads"):   # padrao: orcamento do recursos.py (modo maximo herdado pelos comandos)
+    if caso.get("threads"):  # padrao: orcamento do recursos.py (modo maximo herdado pelos comandos)
         for v in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS", "REVO_THREADS"):
             env[v] = str(caso["threads"])
     env["PYTHONIOENCODING"] = "utf-8"
@@ -209,7 +215,9 @@ def rodar_caso(caso, registrar=False, raiz_rodadas=RODADAS, base_dir=BASE, log=p
     for spec in substituir(caso.get("metricas", []), ctx):
         valores.update(medir(spec))
     res["valores"] = valores
-    prob = comparar(valores, None if registrar else (base or {}).get("valores"), caso.get("tolerancias"), caso.get("limites"))
+    prob = comparar(
+        valores, None if registrar else (base or {}).get("valores"), caso.get("tolerancias"), caso.get("limites")
+    )
     res["problemas"] = prob
     if registrar:
         if prob:
@@ -217,7 +225,12 @@ def rodar_caso(caso, registrar=False, raiz_rodadas=RODADAS, base_dir=BASE, log=p
             return res, 1
         os.makedirs(base_dir, exist_ok=True)
         with open(arq_base, "w", encoding="utf-8") as f:
-            json.dump(dict(caso=nome, registrado=res["inicio"], entradas=assin, valores=valores), f, indent=1, ensure_ascii=False)
+            json.dump(
+                dict(caso=nome, registrado=res["inicio"], entradas=assin, valores=valores),
+                f,
+                indent=1,
+                ensure_ascii=False,
+            )
         res["status"] = "base_registrada"
         return res, 0
     if base is None:
@@ -241,9 +254,13 @@ def main(argv=None):
     if a.listar:
         for c in casos:
             tem = os.path.exists(os.path.join(BASE, c["nome"] + ".json"))
-            print(f"{c['nome']:28s} {'CARO ' if c.get('caro') else '     '}{'base ok' if tem else 'sem base'} | {c.get('descricao', '')}")
+            print(
+                f"{c['nome']:28s} {'CARO ' if c.get('caro') else '     '}{'base ok' if tem else 'sem base'} | {c.get('descricao', '')}"
+            )
         return 0
-    sel = [c for c in casos if (a.caso and c["nome"] in a.caso) or (not a.caso and (a.incluir_caros or not c.get("caro")))]
+    sel = [
+        c for c in casos if (a.caso and c["nome"] in a.caso) or (not a.caso and (a.incluir_caros or not c.get("caro")))
+    ]
     if a.caso and len(sel) != len(set(a.caso)):
         ap.error(f"caso desconhecido: {sorted(set(a.caso) - {c['nome'] for c in casos})}")
     pior = 0
@@ -255,7 +272,11 @@ def main(argv=None):
         except FileNotFoundError as e:
             r, cod = dict(caso=c["nome"], status="entrada_ausente", problemas=[str(e)]), 3
         relatorio.append(r)
-        print(f"   {r['status']}" + (f" ({r.get('segundos_comandos')} s)" if r.get("segundos_comandos") is not None else ""), flush=True)
+        print(
+            f"   {r['status']}"
+            + (f" ({r.get('segundos_comandos')} s)" if r.get("segundos_comandos") is not None else ""),
+            flush=True,
+        )
         for p in r.get("problemas", []):
             print("   -", p, flush=True)
         if "pasta" in r:

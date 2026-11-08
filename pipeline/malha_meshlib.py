@@ -6,8 +6,8 @@ Sem --saida so mede. Com --saida: remove componentes com menos de --min-faces, c
 so preenche furos se pedido: --furo-max mm > 0 (padrao 0 = nao fecha nenhum), opcionalmente reorienta faces, e mede de novo.
 Calibrado: parachoque_malha_1M_v8.ply -> 980610 tri, 491002 vertices, 538 furos, 384 componentes (igual ao MeshInspector 2.5.9).
 """
+
 import argparse
-import sys
 
 from meshlib import mrmeshpy as mm
 
@@ -15,9 +15,13 @@ from meshlib import mrmeshpy as mm
 def metricas(m):
     comps = mm.MeshComponents.getAllComponents(m)
     tam = sorted((c.count() for c in comps), reverse=True)
-    return dict(triangulos=m.topology.numValidFaces(), vertices=m.topology.numValidVerts(),
-                furos=len(m.topology.findHoleRepresentiveEdges()), componentes=len(comps),
-                maior_componente=tam[0] if tam else 0)
+    return dict(
+        triangulos=m.topology.numValidFaces(),
+        vertices=m.topology.numValidVerts(),
+        furos=len(m.topology.findHoleRepresentiveEdges()),
+        componentes=len(comps),
+        maior_componente=tam[0] if tam else 0,
+    )
 
 
 def reparar(m, min_faces=2000, furo_max=0.0, orientar=False):
@@ -28,7 +32,7 @@ def reparar(m, min_faces=2000, furo_max=0.0, orientar=False):
             manter |= c
     m.topology.deleteFaces(m.topology.getValidFaces() - manter)
     mm.fixMultipleEdges(m)
-    if furo_max <= 0:          # fechar furos so a pedido (--furo-max > 0)
+    if furo_max <= 0:  # fechar furos so a pedido (--furo-max > 0)
         return m
     p = mm.FillHoleParams()
     for e in m.topology.findHoleRepresentiveEdges():
@@ -40,8 +44,10 @@ def reparar(m, min_faces=2000, furo_max=0.0, orientar=False):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("malha"); ap.add_argument("--saida")
-    ap.add_argument("--min-faces", type=int, default=2000); ap.add_argument("--furo-max", type=float, default=0.0)
+    ap.add_argument("malha")
+    ap.add_argument("--saida")
+    ap.add_argument("--min-faces", type=int, default=2000)
+    ap.add_argument("--furo-max", type=float, default=0.0)
     ap.add_argument("--orientar", action="store_true")
     a = ap.parse_args()
     m = mm.loadMesh(a.malha)

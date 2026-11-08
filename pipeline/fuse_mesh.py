@@ -13,6 +13,9 @@ import sys
 
 import numpy as np
 import open3d as o3d
+from metricas import (
+    normais_da_nuvem,
+)  # normais por PCA na GPU (CPU so Poisson e orient_normals_consistent_tangent_plane do Open3D)
 
 
 def load_cloud(path: str) -> o3d.geometry.PointCloud:
@@ -24,9 +27,7 @@ def load_cloud(path: str) -> o3d.geometry.PointCloud:
 
 def ensure_normals(pcd: o3d.geometry.PointCloud, radius: float, max_nn: int) -> None:
     if not pcd.has_normals():
-        pcd.estimate_normals(
-            search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=radius, max_nn=max_nn)
-        )
+        normais_da_nuvem(pcd, radius, max_nn)
     pcd.orient_normals_consistent_tangent_plane(k=max_nn)
 
 
