@@ -1,12 +1,12 @@
 """Le os parametros de um script por AST (sem importar nem executar): add_argument -> especificacao."""
+
 import ast
-import os
 
 
 def _lit(node, consts):
     try:
         return ast.literal_eval(node)
-    except Exception:
+    except (ValueError, TypeError, SyntaxError, MemoryError, RecursionError):
         pass
     if isinstance(node, ast.Name) and node.id in consts:
         return consts[node.id]
@@ -27,7 +27,7 @@ def _constantes(tree):
         if isinstance(n, ast.Assign) and len(n.targets) == 1 and isinstance(n.targets[0], ast.Name):
             try:
                 consts[n.targets[0].id] = ast.literal_eval(n.value)
-            except Exception:
+            except (ValueError, TypeError, SyntaxError, MemoryError, RecursionError):
                 pass
     return consts
 
@@ -65,9 +65,13 @@ def _spec_de_chamada(call, consts, nomes_loop=None):
         "tipo": tipo,
         "acao": acao,
         "posicional": not opcional,
-        "obrigatorio": (nargs not in ("?", "*")) if not opcional else bool(_lit(kw["required"], consts) if "required" in kw else False),
+        "obrigatorio": (nargs not in ("?", "*"))
+        if not opcional
+        else bool(_lit(kw["required"], consts) if "required" in kw else False),
         "padrao": _lit(kw["default"], consts) if "default" in kw else None,
-        "padrao_dinamico": "default" in kw and _lit(kw["default"], consts) is None and not (isinstance(kw["default"], ast.Constant)),
+        "padrao_dinamico": "default" in kw
+        and _lit(kw["default"], consts) is None
+        and not (isinstance(kw["default"], ast.Constant)),
         "ajuda": (_lit(kw["help"], consts) or "") if "help" in kw else "",
         "opcoes": _lit(kw["choices"], consts) if "choices" in kw else None,
         "nargs": nargs,
@@ -109,7 +113,11 @@ def ler_script(caminho):
 
     def visita_corpo(no_for, loop):
         for stmt in no_for.body:
-            if isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Call) and getattr(stmt.value.func, "attr", "") == "add_argument":
+            if (
+                isinstance(stmt, ast.Expr)
+                and isinstance(stmt.value, ast.Call)
+                and getattr(stmt.value.func, "attr", "") == "add_argument"
+            ):
                 s = _spec_de_chamada(stmt.value, consts, loop)
                 if s and s["dest"] not in vistos:
                     vistos.add(s["dest"])
@@ -126,4 +134,5 @@ def ler_script(caminho):
 if __name__ == "__main__":
     import json
     import sys
+
     print(json.dumps(ler_script(sys.argv[1]), indent=1, ensure_ascii=False))

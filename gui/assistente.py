@@ -3,6 +3,7 @@
 O Claude Code roda como subprocesso em modo headless (claude -p --output-format stream-json). Ele usa o login ja feito no CLI,
 le o repositorio (CLAUDE.md, guia, scripts) e pode propor etapas, que so entram na fila depois que o usuario clicar.
 """
+
 import html
 import json
 import os
@@ -12,29 +13,58 @@ import time
 
 from PySide6.QtCore import QProcess, QProcessEnvironment, Qt, QTimer
 from PySide6.QtGui import QTextDocument
-from PySide6.QtWidgets import (QCheckBox, QFrame, QHBoxLayout, QLabel, QMessageBox, QPlainTextEdit, QPushButton, QTextBrowser,
-                               QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QMessageBox,
+    QPlainTextEdit,
+    QPushButton,
+    QTextBrowser,
+    QVBoxLayout,
+    QWidget,
+)
 
-from catalog import PIPE, RAIZ
-from core import substituir
-from paginas import titulo_pagina
-from widgets import Combo
+from gui.catalog import PIPE, RAIZ
+from gui.core import substituir
+from gui.paginas import titulo_pagina
+from gui.widgets import Combo
 
 MODELOS = [("Padrão da conta", ""), ("Opus", "opus"), ("Sonnet", "sonnet"), ("Haiku (rápido)", "haiku")]
-MODOS = [("Analista (roda scripts e analisa a nuvem, como no CLI)", "analista"), ("Consultar (somente leitura)", "leitura"),
-         ("Avançado (também edita o código do repositório)", "avancado")]
-FERRAMENTAS = {"leitura": ["Read", "Grep", "Glob"], "analista": ["Read", "Grep", "Glob", "Write", "Bash"],
-               "avancado": ["Read", "Grep", "Glob", "Edit", "Write", "Bash"]}
+MODOS = [
+    ("Analista (roda scripts e analisa a nuvem, como no CLI)", "analista"),
+    ("Consultar (somente leitura)", "leitura"),
+    ("Avançado (também edita o código do repositório)", "avancado"),
+]
+FERRAMENTAS = {
+    "leitura": ["Read", "Grep", "Glob"],
+    "analista": ["Read", "Grep", "Glob", "Write", "Bash"],
+    "avancado": ["Read", "Grep", "Glob", "Edit", "Write", "Bash"],
+}
 # freio contra acidentes, nao e uma sandbox: o que mais importa continua sendo a regra do prompt
-BLOQUEADOS = ["Bash(rm:*)", "Bash(del:*)", "Bash(rmdir:*)", "Bash(rd:*)", "Bash(Remove-Item:*)", "Bash(move:*)", "Bash(mv:*)",
-              "Bash(git push:*)", "Bash(git reset:*)", "Bash(curl:*)", "Bash(wget:*)"]
+BLOQUEADOS = [
+    "Bash(rm:*)",
+    "Bash(del:*)",
+    "Bash(rmdir:*)",
+    "Bash(rd:*)",
+    "Bash(Remove-Item:*)",
+    "Bash(move:*)",
+    "Bash(mv:*)",
+    "Bash(git push:*)",
+    "Bash(git reset:*)",
+    "Bash(curl:*)",
+    "Bash(wget:*)",
+]
 
 ANALISTA = """
-MODO ANALISTA: voce pode rodar comandos (Bash) e ler imagens (Read em .png). Trabalhe como no CLI: entenda o pedido, olhe os dados de verdade, decida com evidencia e so entao processe. Para analisar uma nuvem use os scripts de pipeline/ e o python do .venv (.venv\\Scripts\\python.exe), leia os resultados (numeros, *_antes_depois.png, raw_preview.ply) e diga o que viu antes de concluir.
+MODO ANALISTA: voce pode rodar comandos (Bash) e ler imagens (Read em .png). Trabalhe como no CLI: entenda o pedido, consulte a geometria 3D e decida com evidencia. Use os scripts de pipeline/ e o python do .venv (.venv\\Scripts\\python.exe). PNGs sao apoio visual; regioes ocultas exigem consultas numericas aos pontos 3D, cortes e origem quadro/pixel.
+- Leia --help de consulta3d.py e inspecao_fusao.py para consultar regioes integrais, distancias e observacoes de origem. O HTML permite orbita, zoom e cortes, mas a navegacao e amostrada: confira as regioes suspeitas nos dados integrais antes de decidir.
+- Para priorizar partes de scans diferentes, use limpar_qualidade_3d.py ou ciclo_precisao.py qualidade com poses validadas no mesmo referencial. Compare evidencia temporal, normais com sinal, incidencia e cobertura por outra vista. Densidade e rugosidade espacial isoladas nao provam qualidade: bordas e detalhes exclusivos devem permanecer.
+- So descarte uma regiao ruim se houver evidencia de cobertura boa independente. Deformacao/perda de rastreio sem substituto confiavel gera pendencia e bloqueia aprovacao do merge. Nao declare limpeza perfeita nem elimine pendencias para liberar uma fusao. Aplique mascaras nos frames de uma nova revisao e audite poses, profundidades retidas e hashes.
 - Rascunhos e scripts de analise ficam em {TRABALHO}\\_analise (crie a pasta). Nunca escreva dentro do projeto original.
 - Nunca apague, mova ou sobrescreva nada. Saidas vao para pastas novas; se o destino existir e nao estiver vazio, escolha outro nome.
-- Rode analises curtas direto. Para o processamento longo (limpeza, uniao, Revo; mais de uns 8 minutos) NAO rode aqui: proponha o cartao "acao", assim a fila da GUI executa com prioridade baixa e nova tentativa em caso de falha. Depois que o usuario rodar, leia o log/saida e confira.
-- Maquina instavel sob carga: use OMP_NUM_THREADS=4 e prioridade baixa em qualquer script pesado que rodar diretamente.
+- Rode analises curtas direto. Para o processamento longo (limpeza, uniao, Revo; mais de uns 8 minutos) proponha o cartao "acao", assim a fila da GUI executa. Depois que o usuario rodar, leia o log/saida e confira.
+- Siga o orcamento de pipeline/recursos.py e o guia atual: CUDA obrigatoria para geometria, modo maximo por padrao; nao habilite REVO_PERMITIR_CPU em producao.
 - Ao terminar, resuma o que mediu, o que decidiu e o que falta validar, sem afirmar o que nao verificou.
 """
 
@@ -60,8 +90,14 @@ em "Adicionar à fila". Proponha no maximo as etapas necessarias e explique em u
 """
 
 RAPIDOS = [
-    ("Explicar o último erro", "Leia o fim do log abaixo, diga o que deu errado e o que fazer. Se couber uma etapa, proponha.\n\n{LOG}"),
-    ("Qual tarefa usar?", "Olhando o projeto selecionado e o guia, qual tarefa devo usar e com quais parâmetros? Explique em poucas linhas."),
+    (
+        "Explicar o último erro",
+        "Leia o fim do log abaixo, diga o que deu errado e o que fazer. Se couber uma etapa, proponha.\n\n{LOG}",
+    ),
+    (
+        "Qual tarefa usar?",
+        "Olhando o projeto selecionado e o guia, qual tarefa devo usar e com quais parâmetros? Explique em poucas linhas.",
+    ),
     ("Revisar a fila", "Revise a fila atual: a ordem faz sentido, falta algum argumento, algum destino já existe?"),
 ]
 
@@ -69,8 +105,14 @@ _RE_ACAO = re.compile(r"```acao\s*\n(.*?)```", re.S)
 
 
 def achar_claude():
-    return shutil.which("claude") or next((p for p in (os.path.expanduser(r"~\.local\bin\claude.exe"),
-                                                       os.path.expandvars(r"%APPDATA%\npm\claude.cmd")) if os.path.exists(p)), None)
+    return shutil.which("claude") or next(
+        (
+            p
+            for p in (os.path.expanduser(r"~\.local\bin\claude.exe"), os.path.expandvars(r"%APPDATA%\npm\claude.cmd"))
+            if os.path.exists(p)
+        ),
+        None,
+    )
 
 
 def extrair_acoes(texto):
@@ -80,12 +122,16 @@ def extrair_acoes(texto):
         try:
             d = json.loads(m.group(1))
             script, args = d["script"], d.get("args", [])
-            if not isinstance(script, str) or os.path.basename(script) != script or not os.path.isfile(os.path.join(PIPE, script)):
+            if (
+                not isinstance(script, str)
+                or os.path.basename(script) != script
+                or not os.path.isfile(os.path.join(PIPE, script))
+            ):
                 raise ValueError(f"script inexistente em pipeline/: {script}")
             if not isinstance(args, list):
                 raise ValueError("'args' precisa ser uma lista")
             acoes.append({"nome": str(d.get("nome") or script), "script": script, "args": [str(a) for a in args]})
-        except Exception as e:                      # JSON invalido ou script que nao existe: mostra o motivo
+        except (ValueError, KeyError, TypeError) as e:
             acoes.append({"erro": str(e)})
     return _RE_ACAO.sub("", texto).strip(), acoes
 
@@ -97,11 +143,11 @@ class PaginaAssistente(QWidget):
         self.proc = None
         self.buf = b""
         self.errbuf = b""
-        self.resposta = ""                           # texto da resposta em andamento
+        self.resposta = ""  # texto da resposta em andamento
         self.acoes = []
         saved = app.estado.d.get("assistente", {})
         self.sid = saved.get("sid")
-        self.msgs = saved.get("msgs", [])            # [(papel, texto)]
+        self.msgs = saved.get("msgs", [])  # [(papel, texto)]
         self.t_render = QTimer(self)
         self.t_render.setSingleShot(True)
         self.t_render.timeout.connect(self.renderizar)
@@ -109,8 +155,13 @@ class PaginaAssistente(QWidget):
         lay = QVBoxLayout(self)
         lay.setContentsMargins(28, 22, 28, 12)
         lay.setSpacing(10)
-        lay.addWidget(titulo_pagina("Assistente", "Conversa com o Claude Code da sua assinatura. Ele lê o guia e os scripts deste projeto, "
-                                    "explica erros e sugere etapas. Nada roda sem o seu clique."))
+        lay.addWidget(
+            titulo_pagina(
+                "Assistente",
+                "Conversa com o Claude Code da sua assinatura. Ele lê o guia e os scripts deste projeto, "
+                "explica erros e sugere etapas. Nada roda sem o seu clique.",
+            )
+        )
 
         # barra de opcoes
         op = QHBoxLayout()
@@ -179,6 +230,7 @@ class PaginaAssistente(QWidget):
         ent.addLayout(col)
         lay.addLayout(ent)
         from PySide6.QtGui import QKeySequence, QShortcut
+
         QShortcut(QKeySequence("Ctrl+Return"), self.entrada, activated=self.enviar)
 
         self.exe = achar_claude()
@@ -188,29 +240,45 @@ class PaginaAssistente(QWidget):
     # ------------------------------------------------------------------ estado
     def _checar_cli(self):
         if not self.exe:
-            self.lbl_cli.setText("Claude Code não encontrado. Instale o CLI e faça login (comando `claude`) para usar o assistente.")
+            self.lbl_cli.setText(
+                "Claude Code não encontrado. Instale o CLI e faça login (comando `claude`) para usar o assistente."
+            )
             self.b_env.setEnabled(False)
             return
-        p = QProcess(self)
-        p.finished.connect(lambda *_: self.lbl_cli.setText(
-            f"Usando {bytes(p.readAllStandardOutput()).decode(errors='replace').strip()} com o login da sua assinatura (sem chave de API)."))
+        self._versao_proc = p = QProcess(self)
+        p.finished.connect(self._mostrar_versao_cli)
         p.start(self.exe, ["--version"])
 
+    def _mostrar_versao_cli(self, *_):
+        versao = bytes(self._versao_proc.readAllStandardOutput()).decode(errors="replace").strip()
+        self.lbl_cli.setText(f"Usando {versao} com o login da sua assinatura (sem chave de API).")
+
     def _salvar(self):
-        self.app.estado.d["assistente"] = {"sid": self.sid, "msgs": self.msgs[-60:], "modelo": self.c_modelo.currentData(),
-                                           "modo": self.c_modo.currentData()}
+        self.app.estado.d["assistente"] = {
+            "sid": self.sid,
+            "msgs": self.msgs[-60:],
+            "modelo": self.c_modelo.currentData(),
+            "modo": self.c_modo.currentData(),
+        }
         self.app.salvar_depois()
 
     def _modo_mudou(self, _):
         modo = self.c_modo.currentData()
         if modo != "leitura":
-            msg = ("Neste modo o assistente executa comandos no seu computador sem pedir confirmação a cada passo, para analisar a nuvem "
-                   "e gravar resultados em pastas novas. Apagar, mover e acessar a rede estão bloqueados, mas isso é um freio e não uma "
-                   "proteção total; o projeto original continua protegido só pela regra dada a ele.")
+            msg = (
+                "Neste modo o assistente executa comandos no seu computador sem pedir confirmação a cada passo, para analisar a nuvem "
+                "e gravar resultados em pastas novas. Apagar, mover e acessar a rede estão bloqueados, mas isso é um freio e não uma "
+                "proteção total; o projeto original continua protegido só pela regra dada a ele."
+            )
             if modo == "avancado":
                 msg += "\n\nAlém disso, ele pode editar o código deste repositório."
-            r = QMessageBox.warning(self, "Modo " + ("analista" if modo == "analista" else "avançado"), msg + "\n\nAtivar?",
-                                    QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+            r = QMessageBox.warning(
+                self,
+                "Modo " + ("analista" if modo == "analista" else "avançado"),
+                msg + "\n\nAtivar?",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
+            )
             if r != QMessageBox.Yes:
                 self.c_modo.setCurrentIndex(self.c_modo.findData(self._modo_ant))
                 return
@@ -229,11 +297,18 @@ class PaginaAssistente(QWidget):
     def _estado_gui(self):
         e = self.app.estado
         ctx = e.ctx
-        return json.dumps({
-            "projeto": ctx.get("projeto"), "saida": ctx.get("saida"), "trabalho": ctx.get("trabalho"), "scans_selecionados": ctx.get("scans", []),
-            "fila": [j.get("nome") for j in e.d.get("fila", [])], "executando": bool(self.app.estado_run),
-            "pagina_atual": self.app.navs[self.app.pilha.currentIndex()].text(),
-        }, ensure_ascii=False)
+        return json.dumps(
+            {
+                "projeto": ctx.get("projeto"),
+                "saida": ctx.get("saida"),
+                "trabalho": ctx.get("trabalho"),
+                "scans_selecionados": ctx.get("scans", []),
+                "fila": [j.get("nome") for j in e.d.get("fila", [])],
+                "executando": bool(self.app.estado_run),
+                "pagina_atual": self.app.navs[self.app.pilha.currentIndex()].text(),
+            },
+            ensure_ascii=False,
+        )
 
     def _rapido(self, modelo):
         log = "\n".join(self.app.p_fila.console.toPlainText().splitlines()[-80:]) or "(o log está vazio)"
@@ -250,12 +325,25 @@ class PaginaAssistente(QWidget):
         self._limpar_acoes()
         self.renderizar()
         modo = self.c_modo.currentData()
-        args = ["-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages",
-                "--append-system-prompt", SISTEMA + (ANALISTA.replace("{TRABALHO}", self.app.estado.ctx.get("trabalho") or "{TRABALHO}") if modo != "leitura" else ""),
-                "--allowedTools", *FERRAMENTAS[modo]]
+        args = [
+            "-p",
+            "--output-format",
+            "stream-json",
+            "--verbose",
+            "--include-partial-messages",
+            "--append-system-prompt",
+            SISTEMA
+            + (
+                ANALISTA.replace("{TRABALHO}", self.app.estado.ctx.get("trabalho") or "{TRABALHO}")
+                if modo != "leitura"
+                else ""
+            ),
+            "--allowedTools",
+            *FERRAMENTAS[modo],
+        ]
         if modo != "leitura":
             args += ["--disallowedTools", *BLOQUEADOS]
-            for k in ("projeto", "saida", "trabalho"):          # deixa o Claude ler/gravar nessas pastas
+            for k in ("projeto", "saida", "trabalho"):  # deixa o Claude ler/gravar nessas pastas
                 d = self.app.estado.ctx.get(k)
                 if d and os.path.isdir(d):
                     args += ["--add-dir", d]
@@ -268,16 +356,18 @@ class PaginaAssistente(QWidget):
         p = self.proc = QProcess(self)
         p.setWorkingDirectory(RAIZ)
         env = QProcessEnvironment.systemEnvironment()
-        for k in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"):       # garante o uso da assinatura, nao de uma chave
+        for k in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"):  # garante o uso da assinatura, nao de uma chave
             env.remove(k)
-        env.insert("BASH_DEFAULT_TIMEOUT_MS", "600000")                # analises de nuvem passam dos 2 min padrao
+        env.insert("BASH_DEFAULT_TIMEOUT_MS", "600000")  # analises de nuvem passam dos 2 min padrao
         env.insert("BASH_MAX_TIMEOUT_MS", "600000")
         env.insert("OMP_NUM_THREADS", "4")
         p.setProcessEnvironment(env)
         p.readyReadStandardOutput.connect(self._le_saida)
         p.readyReadStandardError.connect(lambda: setattr(self, "errbuf", self.errbuf + bytes(p.readAllStandardError())))
         p.finished.connect(self._terminou)
-        p.errorOccurred.connect(lambda e: e == QProcess.FailedToStart and self._falha("Não consegui iniciar o Claude Code."))
+        p.errorOccurred.connect(
+            lambda e: e == QProcess.FailedToStart and self._falha("Não consegui iniciar o Claude Code.")
+        )
         self.buf, self.errbuf, self.t0, self.ok_resultado = b"", b"", time.time(), False
         p.start(self.exe, args)
         p.write(f"[ESTADO DA GUI]\n{self._estado_gui()}\n[/ESTADO]\n\n{texto}".encode("utf-8"))
@@ -311,10 +401,16 @@ class PaginaAssistente(QWidget):
                 self.lbl_estado.setText("Escrevendo…")
                 self.t_render.start(150)
             elif ev.get("type") == "content_block_start" and ev["content_block"].get("type") == "tool_use":
-                nome = {"Read": "Lendo arquivo", "Grep": "Buscando no código", "Glob": "Listando arquivos", "Bash": "Executando comando", "Write": "Gravando arquivo"}.get(ev["content_block"]["name"], "Usando " + ev["content_block"]["name"])
+                nome = {
+                    "Read": "Lendo arquivo",
+                    "Grep": "Buscando no código",
+                    "Glob": "Listando arquivos",
+                    "Bash": "Executando comando",
+                    "Write": "Gravando arquivo",
+                }.get(ev["content_block"]["name"], "Usando " + ev["content_block"]["name"])
                 self.lbl_estado.setText(nome + "…")
             elif ev.get("type") == "message_start" and self.resposta:
-                self.resposta += "\n\n"              # nova mensagem do mesmo turno (depois de usar uma ferramenta)
+                self.resposta += "\n\n"  # nova mensagem do mesmo turno (depois de usar uma ferramenta)
         elif tipo == "assistant":
             for b in d.get("message", {}).get("content", []):
                 if b.get("type") == "tool_use":
@@ -326,7 +422,11 @@ class PaginaAssistente(QWidget):
             for b in cont if isinstance(cont, list) else []:
                 if b.get("type") == "tool_result":
                     c = b.get("content")
-                    c = "".join(x.get("text", "") for x in c if isinstance(x, dict)) if isinstance(c, list) else str(c or "")
+                    c = (
+                        "".join(x.get("text", "") for x in c if isinstance(x, dict))
+                        if isinstance(c, list)
+                        else str(c or "")
+                    )
                     ln = c.strip().splitlines()
                     c = "\n".join(ln[:14] + (["… (+%d linhas)" % (len(ln) - 14)] if len(ln) > 14 else []))
                     self.resposta += f"```\n{c[:1500]}\n```\n\n"
@@ -338,7 +438,11 @@ class PaginaAssistente(QWidget):
             self.ok_resultado = True
             if d.get("is_error"):
                 msg = str(d.get("result") or "erro desconhecido")
-                dica = "\n\nFaça login no terminal com o comando `claude` e tente de novo." if "login" in msg.lower() else ""
+                dica = (
+                    "\n\nFaça login no terminal com o comando `claude` e tente de novo."
+                    if "login" in msg.lower()
+                    else ""
+                )
                 self.resposta = (self.resposta + "\n\n" if self.resposta else "") + f"**Erro:** {msg}{dica}"
             elif not self.resposta and d.get("result"):
                 self.resposta = str(d["result"])
@@ -356,7 +460,11 @@ class PaginaAssistente(QWidget):
                 pass
         if not self.ok_resultado and not self.resposta:
             err = self.errbuf.decode("utf-8", errors="replace").strip()
-            self.resposta = "_Interrompido._" if codigo != 0 and not err else f"**Erro:** {err or 'o Claude Code terminou sem resposta.'}"
+            self.resposta = (
+                "_Interrompido._"
+                if codigo != 0 and not err
+                else f"**Erro:** {err or 'o Claude Code terminou sem resposta.'}"
+            )
         self.proc = None
         texto, acoes = extrair_acoes(self.resposta)
         self.msgs.append(("assistant", texto or "(sem texto)"))
@@ -394,8 +502,10 @@ class PaginaAssistente(QWidget):
                 t.setObjectName("suave")
                 h.addWidget(t, 1)
             else:
-                t = QLabel(f"<b>{html.escape(a['nome'])}</b><br><span style='color:{self.app.pal['suave']}'>{html.escape(a['script'])} "
-                           f"{html.escape(' '.join(a['args']))}</span>")
+                t = QLabel(
+                    f"<b>{html.escape(a['nome'])}</b><br><span style='color:{self.app.pal['suave']}'>{html.escape(a['script'])} "
+                    f"{html.escape(' '.join(a['args']))}</span>"
+                )
                 t.setWordWrap(True)
                 t.setTextInteractionFlags(Qt.TextSelectableByMouse)
                 h.addWidget(t, 1)
@@ -434,14 +544,20 @@ class PaginaAssistente(QWidget):
         if self.proc is not None or self.resposta:
             itens.append(("assistant", extrair_acoes(self.resposta)[0] if self.resposta else "…"))
         if not itens:
-            partes.append(f"<p style='color:{p['suave']}'>Sem mensagens ainda. Pergunte, por exemplo: <i>qual tarefa uso para um scan com placa de "
-                          f"marcadores?</i> ou clique em <i>Explicar o último erro</i> depois de uma execução que falhou.</p>")
+            partes.append(
+                f"<p style='color:{p['suave']}'>Sem mensagens ainda. Pergunte, por exemplo: <i>qual tarefa uso para um scan com placa de "
+                f"marcadores?</i> ou clique em <i>Explicar o último erro</i> depois de uma execução que falhou.</p>"
+            )
         for papel, txt in itens:
             if papel == "user":
-                partes.append(f"<table width='100%' style='margin:8px 0'><tr><td style='background:{p['sel']};padding:8px 12px;border-radius:8px'>"
-                              f"<b style='color:{p['acento']}'>Você</b><br>{html.escape(txt).replace(chr(10), '<br>')}</td></tr></table>")
+                partes.append(
+                    f"<table width='100%' style='margin:8px 0'><tr><td style='background:{p['sel']};padding:8px 12px;border-radius:8px'>"
+                    f"<b style='color:{p['acento']}'>Você</b><br>{html.escape(txt).replace(chr(10), '<br>')}</td></tr></table>"
+                )
             else:
-                partes.append(f"<div style='margin:8px 0'><b style='color:{p['ok']}'>Assistente</b>{self._md_html(txt)}</div>")
+                partes.append(
+                    f"<div style='margin:8px 0'><b style='color:{p['ok']}'>Assistente</b>{self._md_html(txt)}</div>"
+                )
         bar = self.chat.verticalScrollBar()
         fim = bar.value() >= bar.maximum() - 20
         self.chat.setHtml(f"<body style='color:{p['texto']}'>" + "".join(partes) + "</body>")

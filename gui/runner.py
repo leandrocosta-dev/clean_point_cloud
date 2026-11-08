@@ -1,4 +1,5 @@
-"""Executor sequencial de comandos: fila, prioridade baixa, repeticao em crash do Open3D, historico."""
+"""Executor sequencial: fila, prioridade configuravel, repeticao em crash e historico."""
+
 import json
 import os
 import subprocess
@@ -6,9 +7,9 @@ import time
 
 from PySide6.QtCore import QObject, QProcess, QProcessEnvironment, QTimer, Signal
 
-from core import ARQ_HISTORICO, citar
+from gui.core import ARQ_HISTORICO, citar
 
-CODIGOS_CRASH = {139, 3221225477, -1073741819, -11, 3221226505}   # segfault do Open3D (guia, secao 8)
+CODIGOS_CRASH = {139, 3221225477, -1073741819, -11, 3221226505}  # segfault do Open3D (guia, secao 8)
 
 
 def carregar_historico():
@@ -30,11 +31,11 @@ def _gravar_historico(reg):
 
 
 class Runner(QObject):
-    linha = Signal(str, str)                 # texto, tipo (out|info|erro|ok)
-    job_iniciado = Signal(int, int, str)     # indice, total, nome
-    job_concluido = Signal(int, int)         # indice, codigo
+    linha = Signal(str, str)  # texto, tipo (out|info|erro|ok)
+    job_iniciado = Signal(int, int, str)  # indice, total, nome
+    job_concluido = Signal(int, int)  # indice, codigo
     fila_concluida = Signal(bool)
-    estado = Signal(bool)                    # rodando?
+    estado = Signal(bool)  # rodando?
 
     def __init__(self, estado):
         super().__init__()
@@ -113,12 +114,16 @@ class Runner(QObject):
         prio = self.estado_app.env.get("prioridade", "alta")
         try:
             import psutil
-            classe = {"alta": psutil.HIGH_PRIORITY_CLASS, "acima": psutil.ABOVE_NORMAL_PRIORITY_CLASS,
-                      "baixa": psutil.BELOW_NORMAL_PRIORITY_CLASS}.get(prio)
+
+            classe = {
+                "alta": psutil.HIGH_PRIORITY_CLASS,
+                "acima": psutil.ABOVE_NORMAL_PRIORITY_CLASS,
+                "baixa": psutil.BELOW_NORMAL_PRIORITY_CLASS,
+            }.get(prio)
             if classe is not None:
                 psutil.Process(int(self.proc.processId())).nice(classe)
-        except Exception:
-            pass
+        except (psutil.Error, OSError, ValueError, AttributeError) as exc:
+            self.linha.emit(f"Nao foi possivel ajustar a prioridade: {exc}", "info")
 
     def _ler(self):
         dados = bytes(self.proc.readAllStandardOutput()).decode("utf-8", "replace")
@@ -144,9 +149,19 @@ class Runner(QObject):
             QTimer.singleShot(3000, self._iniciar)
             return
         ok = codigo == 0 and not self.parar_pedido
-        self.linha.emit(f"{'✔ concluído' if ok else '✖ terminou com código ' + str(codigo)} em {_dur(dt)}", "ok" if ok else "erro")
-        _gravar_historico({"quando": time.strftime("%Y-%m-%d %H:%M:%S"), "nome": job["nome"], "argv": job["argv"],
-                           "codigo": codigo, "segundos": round(dt, 1), "tentativas": self.tentativa + 1})
+        self.linha.emit(
+            f"{'✔ concluído' if ok else '✖ terminou com código ' + str(codigo)} em {_dur(dt)}", "ok" if ok else "erro"
+        )
+        _gravar_historico(
+            {
+                "quando": time.strftime("%Y-%m-%d %H:%M:%S"),
+                "nome": job["nome"],
+                "argv": job["argv"],
+                "codigo": codigo,
+                "segundos": round(dt, 1),
+                "tentativas": self.tentativa + 1,
+            }
+        )
         self.job_concluido.emit(self.i, codigo)
         if not ok:
             self.falhou = True
@@ -163,7 +178,7 @@ class Runner(QObject):
 
 def _parece_erro(l):
     s = l.lower()
-    return s.startswith("traceback") or "error" in s[:40] or "erro" in s[:20] or s.startswith("  file \"")
+    return s.startswith("traceback") or "error" in s[:40] or "erro" in s[:20] or s.startswith('  file "')
 
 
 def _dur(s):

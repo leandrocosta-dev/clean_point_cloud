@@ -1,22 +1,31 @@
 """GUI do pipeline de nuvem de pontos (Revo Scan).   python gui/app.py"""
+
 import os
 import sys
 import time
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-
 from PySide6.QtCore import QByteArray, Qt, QTimer
 from PySide6.QtGui import QFont, QKeySequence, QShortcut
-from PySide6.QtWidgets import (QApplication, QFrame, QHBoxLayout, QLabel, QMainWindow, QMessageBox, QProgressBar, QPushButton,
-                               QStackedWidget, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (
+    QApplication,
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QMainWindow,
+    QMessageBox,
+    QProgressBar,
+    QPushButton,
+    QStackedWidget,
+    QVBoxLayout,
+    QWidget,
+)
 
-import catalog
-import paginas as PG
-import theme
-from core import Estado
-from assistente import PaginaAssistente
-from inicio import PaginaInicio
-from runner import Runner, _dur
+from gui import catalog, theme
+from gui import paginas as PG
+from gui.assistente import PaginaAssistente
+from gui.core import Estado
+from gui.inicio import PaginaInicio
+from gui.runner import Runner, _dur
 
 # indices das paginas
 INICIO, ASSISTENTE, PROJETO, PIPELINE, FERRAMENTAS, FILA, ENTREGAVEIS, JSON, AMBIENTE = range(9)
@@ -69,10 +78,17 @@ class Janela(QMainWindow):
         self.p_json = PG.PaginaJson(self)
         self.p_amb = PG.PaginaAmbiente(self)
         # (grupo, rotulo, widget) na ordem dos indices acima; o grupo vira um titulo pequeno na barra lateral
-        paginas = [("COMEÇAR", "Início", self.p_inicio), ("", "Assistente (Claude)", self.p_assist),
-                   ("TRABALHAR", "Projeto e pastas", self.p_projeto), ("", "Pipeline completo", self.p_pipeline),
-                   ("", "Ferramentas (todas)", self.p_scripts), ("", "Fila e execução", self.p_fila), ("", "Entregáveis", self.p_entrega),
-                   ("CONFIGURAR", "Configurações JSON", self.p_json), ("", "Ambiente", self.p_amb)]
+        paginas = [
+            ("COMEÇAR", "Início", self.p_inicio),
+            ("", "Assistente (Claude)", self.p_assist),
+            ("TRABALHAR", "Projeto e pastas", self.p_projeto),
+            ("", "Pipeline completo", self.p_pipeline),
+            ("", "Ferramentas (todas)", self.p_scripts),
+            ("", "Fila e execução", self.p_fila),
+            ("", "Entregáveis", self.p_entrega),
+            ("CONFIGURAR", "Configurações JSON", self.p_json),
+            ("", "Ambiente", self.p_amb),
+        ]
         for i, (grupo, nome, w) in enumerate(paginas):
             if grupo:
                 g = QLabel(grupo)
@@ -203,7 +219,9 @@ class Janela(QMainWindow):
         if self.runner.executar(jobs, parar_no_erro=bool(self.estado.env.get("parar_no_erro", True))):
             self.p_fila.console.escrever(f"══ {time.strftime('%H:%M:%S')} · {len(jobs)} etapa(s)", "info")
             return True
-        QMessageBox.information(self, "Em andamento", "Já existe uma execução em andamento. Espere terminar ou use Parar.")
+        QMessageBox.information(
+            self, "Em andamento", "Já existe uma execução em andamento. Espere terminar ou use Parar."
+        )
         return False
 
     def mudar_tema(self, nome):

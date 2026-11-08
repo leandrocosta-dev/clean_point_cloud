@@ -1,4 +1,5 @@
 """Estado persistente, variaveis de contexto, leitura de projetos .revo e cabecalho de .ply."""
+
 import json
 import os
 import re
@@ -14,13 +15,25 @@ ARQ_HISTORICO = os.path.join(ESTADO_DIR, "historico.json")
 PRESETS_DIR = os.path.join(ESTADO_DIR, "presets")
 
 PADRAO = {
-    "ctx": {"raiz": "", "projeto": "", "saida": os.path.join(os.path.expanduser("~"), "Desktop", "Entregas"),
-            "trabalho": os.path.join(os.path.expanduser("~"), "Desktop", "_trabalho"), "scans": []},
+    "ctx": {
+        "raiz": "",
+        "projeto": "",
+        "saida": os.path.join(os.path.expanduser("~"), "Desktop", "Entregas"),
+        "trabalho": os.path.join(os.path.expanduser("~"), "Desktop", "_trabalho"),
+        "scans": [],
+    },
     "env": {
-        "python": os.path.join(RAIZ, ".venv", "Scripts", "python.exe") if os.path.exists(os.path.join(RAIZ, ".venv", "Scripts", "python.exe")) else sys.executable,
-        "prioridade": "alta", "omp_threads": 0, "tentativas_crash": 2, "parar_no_erro": True,
+        "python": os.path.join(RAIZ, ".venv", "Scripts", "python.exe")
+        if os.path.exists(os.path.join(RAIZ, ".venv", "Scripts", "python.exe"))
+        else sys.executable,
+        "prioridade": "alta",
+        "omp_threads": 0,
+        "tentativas_crash": 2,
+        "parar_no_erro": True,
         "meshinspector": r"C:\Program Files\MeshInspector\MeshInspector\MeshInspector.exe",
-        "revo": r"C:\Program Files\Revo Scan 6\RevoScan6.exe", "extra_env": "", "cwd": RAIZ,
+        "revo": r"C:\Program Files\Revo Scan 6\RevoScan6.exe",
+        "extra_env": "",
+        "cwd": RAIZ,
     },
     "tema": "escuro",
     "fila": [],
@@ -35,7 +48,7 @@ class Estado:
             with open(ARQ_ESTADO, encoding="utf-8") as f:
                 salvo = json.load(f)
             env_salvo = salvo.get("env") if isinstance(salvo.get("env"), dict) else {}
-            if "prioridade" not in env_salvo:   # estado antigo (BELOW_NORMAL + 4 threads): migra para o modo maximo
+            if "prioridade" not in env_salvo:  # estado antigo (BELOW_NORMAL + 4 threads): migra para o modo maximo
                 env_salvo.pop("baixa_prioridade", None)
                 env_salvo["omp_threads"] = 0
             for k, v in salvo.items():
@@ -67,8 +80,13 @@ class Estado:
 def variaveis(ctx):
     proj = ctx.get("projeto") or ""
     nome = os.path.basename(proj.rstrip("\\/")) if proj else ""
-    return {"PROJETO": proj, "SAIDA": ctx.get("saida", ""), "TRABALHO": ctx.get("trabalho", ""), "NOME": nome,
-            "SCANS": " ".join(ctx.get("scans", []))}
+    return {
+        "PROJETO": proj,
+        "SAIDA": ctx.get("saida", ""),
+        "TRABALHO": ctx.get("trabalho", ""),
+        "NOME": nome,
+        "SCANS": " ".join(ctx.get("scans", [])),
+    }
 
 
 def substituir(texto, ctx):
@@ -81,15 +99,17 @@ def substituir(texto, ctx):
 def dividir(texto):
     """Divide uma linha em argumentos respeitando aspas (caminhos com espaco)."""
     try:
-        return shlex.split(texto.replace("\\", "\\\\"))     # barras de caminho do Windows nao sao escape
+        return shlex.split(texto.replace("\\", "\\\\"))  # barras de caminho do Windows nao sao escape
     except ValueError:
         return texto.split()
 
 
 def citar(argv):
     """Linha de comando legivel/copiavel para o PowerShell."""
+
     def q(a):
         return f'"{a}"' if re.search(r"[\s&()]", a) or a == "" else a
+
     return " ".join(q(a) for a in argv)
 
 
@@ -133,7 +153,7 @@ def ler_projeto(pasta):
         return None, []
     scans = []
     for n in nos:
-        if n.get("type") == 5:               # pasta de marcadores, nao e scan
+        if n.get("type") == 5:  # pasta de marcadores, nao e scan
             continue
         d = os.path.join(pasta, "data", n["guid"])
         cache = os.path.join(d, "cache")
@@ -145,8 +165,16 @@ def ler_projeto(pasta):
             fmt = "sem quadros"
         else:
             fmt = "ausente"
-        scans.append({"guid": n["guid"], "nome": n.get("name", n["guid"]), "formato": fmt, "pasta": d,
-                      "fuse": os.path.exists(os.path.join(d, "fuse.ply")), "malha": os.path.exists(os.path.join(d, "fuse_mesh.ply"))})
+        scans.append(
+            {
+                "guid": n["guid"],
+                "nome": n.get("name", n["guid"]),
+                "formato": fmt,
+                "pasta": d,
+                "fuse": os.path.exists(os.path.join(d, "fuse.ply")),
+                "malha": os.path.exists(os.path.join(d, "fuse_mesh.ply")),
+            }
+        )
     return revo, scans
 
 

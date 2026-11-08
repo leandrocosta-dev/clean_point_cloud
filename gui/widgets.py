@@ -1,13 +1,32 @@
 """Widgets reutilizaveis: cartoes, linha de parametro e formulario gerado da especificacao do script."""
+
 import os
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox, QFileDialog, QFrame, QGridLayout,
-                               QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem, QPlainTextEdit, QPushButton,
-                               QSpinBox, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (
+    QCheckBox,
+    QComboBox,
+    QDialog,
+    QDialogButtonBox,
+    QDoubleSpinBox,
+    QFileDialog,
+    QFrame,
+    QGridLayout,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QListWidget,
+    QListWidgetItem,
+    QPlainTextEdit,
+    QPushButton,
+    QSpinBox,
+    QStackedWidget,
+    QVBoxLayout,
+    QWidget,
+)
 
-from catalog import ROTULOS
-from core import dividir, substituir
+from gui.catalog import ROTULOS
+from gui.core import dividir, substituir
 
 NAO_CAMINHO = {"nome", "lados", "scan", "scans", "apenas", "unir", "pesos", "corte", "referencia", "lado", "modo"}
 DE_SCANS = {"scans", "apenas", "unir", "scan", "referencia"}
@@ -57,7 +76,11 @@ def cartao_recolhivel(titulo, n, aberto=False):
 
     def alternar(abrir):
         corpo.setVisible(abrir)
-        cab.setText(("▾  " if abrir else "▸  ") + f"{titulo}   ·   {n} parâmetro(s)" + ("" if abrir else "   (clique para abrir)"))
+        cab.setText(
+            ("▾  " if abrir else "▸  ")
+            + f"{titulo}   ·   {n} parâmetro(s)"
+            + ("" if abrir else "   (clique para abrir)")
+        )
 
     cab.clicked.connect(lambda: alternar(not corpo.isVisible()))
     alternar(aberto)
@@ -67,11 +90,13 @@ def cartao_recolhivel(titulo, n, aberto=False):
 
 def _roda_so_com_foco(base):
     """Rolar a pagina com o ponteiro sobre o campo nao pode mudar o valor: so com o campo em foco."""
+
     def wheelEvent(self, e):
         if self.hasFocus():
             base.wheelEvent(self, e)
         else:
-            e.ignore()                              # a rolagem vai para a pagina
+            e.ignore()  # a rolagem vai para a pagina
+
     return wheelEvent
 
 
@@ -120,6 +145,7 @@ class NumDouble(SpinDbl):
 
     def validate(self, text, pos):
         from PySide6.QtGui import QValidator
+
         try:
             float(text.replace(",", ".") or "0")
             return QValidator.Acceptable, text, pos
@@ -160,11 +186,16 @@ class ScanPicker(QDialog):
             self.lista.item(i).setCheckState(estado)
 
     def escolhidos(self):
-        return [self.lista.item(i).data(Qt.UserRole) for i in range(self.lista.count()) if self.lista.item(i).checkState() == Qt.Checked]
+        return [
+            self.lista.item(i).data(Qt.UserRole)
+            for i in range(self.lista.count())
+            if self.lista.item(i).checkState() == Qt.Checked
+        ]
 
 
 class CampoTexto(QWidget):
     """QLineEdit com botoes opcionais de pasta/arquivo/scans."""
+
     mudou = Signal()
 
     def __init__(self, caminho=True, scans=False, app=None, placeholder="", multi=False):
@@ -179,7 +210,10 @@ class CampoTexto(QWidget):
         self.ed.textChanged.connect(lambda _: self.mudou.emit())
         lay.addWidget(self.ed, 1)
         if caminho:
-            for txt, fn, tip in (("Pasta", self._pasta, "Escolher pasta"), ("Arquivo", self._arquivo, "Escolher arquivo")):
+            for txt, fn, tip in (
+                ("Pasta", self._pasta, "Escolher pasta"),
+                ("Arquivo", self._arquivo, "Escolher arquivo"),
+            ):
                 b = QPushButton(txt)
                 b.setObjectName("mini")
                 b.setToolTip(tip)
@@ -227,6 +261,7 @@ class CampoTexto(QWidget):
 
 class LinhaParam(QFrame):
     """Uma linha: [usar] flag/ajuda ........ editor."""
+
     mudou = Signal()
 
     def __init__(self, spec, app, rotulo_txt=None, simples=False, ajuda_txt=None):
@@ -246,7 +281,12 @@ class LinhaParam(QFrame):
 
         self.usar = QCheckBox()
         self.usar.setToolTip("Marcado: o parâmetro é enviado ao script. Desmarcado: vale o padrão do script.")
-        precisa_usar = self.opcional and not s["posicional"] and s["tipo"] != "flag" and (s["tipo"] in ("int", "float") or s["opcoes"])
+        precisa_usar = (
+            self.opcional
+            and not s["posicional"]
+            and s["tipo"] != "flag"
+            and (s["tipo"] in ("int", "float") or s["opcoes"])
+        )
         self.tem_usar = bool(precisa_usar) and not simples
         self.usar.setVisible(self.tem_usar)
         grade.addWidget(self.usar, 0, 0, 2, 1, Qt.AlignTop)
@@ -323,7 +363,7 @@ class LinhaParam(QFrame):
             self._get, self._set = w.value, lambda v: w.setValue(float(v))
             return w
         d = s["dest"]
-        caminho = d not in NAO_CAMINHO
+        caminho = s.get("caminho", t not in ("int", "float") and d not in NAO_CAMINHO)
         ph = ""
         if s["padrao"] not in (None, False):
             ph = f"padrão: {s['padrao']}"
@@ -331,7 +371,9 @@ class LinhaParam(QFrame):
             ph = "valores separados por espaço"
         elif caminho:
             ph = "use {PROJETO}, {SAIDA}, {TRABALHO}, {NOME}"
-        w = CampoTexto(caminho=caminho, scans=d in DE_SCANS, app=self.app, placeholder=ph, multi=self.lista)
+        w = CampoTexto(
+            caminho=caminho, scans=s.get("scans", d in DE_SCANS), app=self.app, placeholder=ph, multi=self.lista
+        )
         w.mudou.connect(self._edit)
         self._get, self._set = w.ed.text, w.ed.setText
         return w
@@ -454,9 +496,24 @@ class FormScript(QWidget):
         raiz = QVBoxLayout(self)
         raiz.setContentsMargins(0, 0, 0, 0)
         raiz.setSpacing(14)
+        self.subcomandos = item.get("subcomandos")
+        if self.subcomandos:
+            self._formas = {}
+            self.comando = Combo()
+            self.comando.addItems(list(self.subcomandos))
+            raiz.addWidget(QLabel("Operação"))
+            raiz.addWidget(self.comando)
+            self._pilha_formas = QStackedWidget()
+            raiz.addWidget(self._pilha_formas)
+            self.comando.currentTextChanged.connect(self._trocar_comando)
+            self._trocar_comando(self.comando.currentText())
+            return
         params = item["params"]
         if not params:
-            f, lay = cartao("Sem parâmetros", "Este script não recebe argumentos (caminhos fixos no código). Use 'Executar' para rodá-lo como está.")
+            f, lay = cartao(
+                "Sem parâmetros",
+                "Este script não recebe argumentos (caminhos fixos no código). Use 'Executar' para rodá-lo como está.",
+            )
             raiz.addWidget(f)
         grupos = []
         if item.get("grupos"):
@@ -480,7 +537,9 @@ class FormScript(QWidget):
         for titulo, ls in grupos:
             if not ls:
                 continue
-            recolher = titulo in ("Quadros e amostragem", "Outros parâmetros") or (titulo == "Parâmetros" and tem_ent and len(ls) > 4)
+            recolher = titulo in ("Quadros e amostragem", "Outros parâmetros") or (
+                titulo == "Parâmetros" and tem_ent and len(ls) > 4
+            )
             if recolher:
                 f, lay = cartao_recolhivel(titulo, len(ls))
                 self.secoes.append((f, [p["dest"] for p in ls]))
@@ -492,7 +551,10 @@ class FormScript(QWidget):
                 self.linhas[p["dest"]] = linha
                 lay.addWidget(linha)
             raiz.addWidget(f)
-        f, lay = cartao("Argumentos extras", "Linha crua anexada ao final do comando (aspas para caminhos com espaço). Garante controle total sobre qualquer flag.")
+        f, lay = cartao(
+            "Argumentos extras",
+            "Linha crua anexada ao final do comando (aspas para caminhos com espaço). Garante controle total sobre qualquer flag.",
+        )
         self.extra = QPlainTextEdit()
         self.extra.setFixedHeight(64)
         self.extra.setPlaceholderText("--flag valor --outra-flag")
@@ -502,14 +564,30 @@ class FormScript(QWidget):
         raiz.addStretch()
         self._abrir_se_ativo()
 
+    def _trocar_comando(self, comando):
+        if comando not in self._formas:
+            item = dict(self.item, params=self.subcomandos[comando], subcomandos=None, grupos=None)
+            forma = FormScript(item, self.app)
+            forma.mudou.connect(self.mudou)
+            self._formas[comando] = forma
+            self._pilha_formas.addWidget(forma)
+        self._forma = self._formas[comando]
+        self.linhas, self.extra = self._forma.linhas, self._forma.extra
+        self._pilha_formas.setCurrentWidget(self._forma)
+        self.mudou.emit()
+
     def _abrir_se_ativo(self):
         """Secao recolhida abre sozinha quando algum parametro dela esta em uso (nada fica escondido com efeito)."""
         for f, dests in self.secoes:
-            if any(self.linhas[d].ativo() and not self.linhas[d].spec["obrigatorio"] for d in dests if d in self.linhas):
+            if any(
+                self.linhas[d].ativo() and not self.linhas[d].spec["obrigatorio"] for d in dests if d in self.linhas
+            ):
                 f.alternar(True)
 
     def argv(self):
         """Argumentos do script (sem python nem caminho). ValueError com todas as pendencias."""
+        if self.subcomandos:
+            return [self.comando.currentText(), *self._forma.argv()]
         ctx = self.app.estado.ctx
         pos, opc, erros = [], [], []
         for p in self.item["params"]:
@@ -524,9 +602,27 @@ class FormScript(QWidget):
         return pos + opc + dividir(substituir(self.extra.toPlainText().strip(), ctx))
 
     def valores(self):
+        if self.subcomandos:
+            return {
+                "subcomando": self.comando.currentText(),
+                "formas": {c: f.valores() for c, f in self._formas.items()},
+            }
         return {"linhas": {d: l.valor() for d, l in self.linhas.items()}, "extra": self.extra.toPlainText()}
 
     def aplicar(self, v):
+        if self.subcomandos:
+            for comando, valores in v.get("formas", {}).items():
+                if comando in self.subcomandos:
+                    self._trocar_comando(comando)
+                    self._forma.aplicar(valores)
+            comando = v.get("subcomando", self.comando.currentText())
+            if comando in self.subcomandos:
+                self.comando.setCurrentText(comando)
+                self._trocar_comando(comando)
+            if "formas" not in v:  # migra presets antigos, que nao tinham seletor de operacao
+                self._forma.aplicar(v)
+            self.mudou.emit()
+            return
         for d, val in v.get("linhas", {}).items():
             if d in self.linhas:
                 self.linhas[d].aplicar(val)
@@ -536,6 +632,11 @@ class FormScript(QWidget):
 
     def aplicar_valores(self, mapa):
         """mapa dest -> valor (presets nomeados do codigo)."""
+        if self.subcomandos:
+            if mapa.get("cmd") in self.subcomandos:
+                self.comando.setCurrentText(mapa["cmd"])
+            self._forma.aplicar_valores(mapa)
+            return
         for d, val in mapa.items():
             if d in self.linhas:
                 self.linhas[d].definir(val)
@@ -543,11 +644,19 @@ class FormScript(QWidget):
         self.mudou.emit()
 
     def restaurar(self):
+        if self.subcomandos:
+            for forma in self._formas.values():
+                forma.restaurar()
+            self.comando.setCurrentIndex(0)
+            return
         for l in self.linhas.values():
             l.restaurar()
         self.extra.clear()
         self.mudou.emit()
 
     def preencher_contexto(self):
+        if self.subcomandos:
+            self._forma.preencher_contexto()
+            return
         for l in self.linhas.values():
             l.preencher_contexto()

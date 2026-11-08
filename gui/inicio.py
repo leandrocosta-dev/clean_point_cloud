@@ -1,43 +1,100 @@
 """Pagina Inicio: fluxo guiado em 4 passos (projeto -> objetivo -> ajustes -> resultado)."""
+
 import glob
 import os
 import re
-import subprocess
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QPixmap
-from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QFileDialog, QFrame, QHBoxLayout, QLabel, QMessageBox, QPlainTextEdit,
-                               QPushButton, QScrollArea, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (
+    QButtonGroup,
+    QCheckBox,
+    QFileDialog,
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QMessageBox,
+    QPlainTextEdit,
+    QPushButton,
+    QScrollArea,
+    QVBoxLayout,
+    QWidget,
+)
 
-import catalog
-from core import citar, humano, substituir
-from widgets import CampoTexto, LinhaParam, cartao
+from gui import catalog
+from gui.core import citar, substituir
+from gui.widgets import CampoTexto, LinhaParam, cartao
 
 # cada tarefa: script, argumentos fixos, onde vai a saida e os poucos campos que importam
 TAREFAS = [
-    dict(id="placa", icone="✂", titulo="Limpar e entregar o .revo",
-         sub="Peça apoiada ou suspensa sobre uma placa-gabarito. Fica só a peça; nada é aberto no Revo.",
-         script="limpar_por_placa.py", fixos=[], saida_flag="--saida", saida_padrao="{SAIDA}\\{NOME}_limpo",
-         extras=[("--diagnostico", "{TRABALHO}\\{NOME}_diagnostico")], entrega="revo",
-         campos=[("altura_min", "Altura mínima sobre a placa (mm)", "Tudo abaixo disso é placa, parafuso ou suporte baixo. "
-                  "Aumente se sobrar a base; diminua se a limpeza cortar a peça.", 16.0),
-                 ("componentes", "Quantas peças manter", "1 mantém só o maior objeto conectado acima da placa.", 1)]),
-    dict(id="mesa", icone="🧹", titulo="Limpar a mesa e entregar o .revo",
-         sub="Peça pousada na mesa. Remove a mesa ao redor da peça; nada é aberto no Revo.",
-         script="rodar_tudo.py", fixos=["--so-limpar"], saida_flag="--saida-limpo", saida_padrao="{SAIDA}\\{NOME}_limpo",
-         extras=[], entrega="revo",
-         campos=[("periferia_mm", "Remover a mesa além de (mm)", "Distância da peça a partir da qual a mesa é apagada (receita validada: 5).", 5.0),
-                 ("periferia_banda", "Espessura da faixa da mesa (mm)", "Receita validada: 12.", 12.0),
-                 ("periferia_alargue", "Alargue da base (mm)", "Quanto relevo baixo ainda conta como peça. Receita validada: 10.", 10.0)]),
-    dict(id="completo", icone="⚙", titulo="Pipeline completo no Revo",
-         sub="Limpa, funde no Revo Scan e exporta nuvem e/ou malha. Usa o mouse: não mexa no PC enquanto roda.",
-         script="rodar_tudo.py", fixos=[], saida_flag="--saida-ply", saida_padrao="{SAIDA}\\{NOME}_resultado",
-         extras=[("--saida-limpo", "{TRABALHO}\\{NOME}_limpo")], entrega="pasta",
-         campos=[("ponto", "Resolução da nuvem (mm)", "Point Distance da fusão. Menor = mais detalhe e mais pesado.", 0.1),
-                 ("malha", "Tipo de malha", "alta = Poisson de alta qualidade; rapida = Fast Meshing.", "alta"),
-                 ("grade", "Resolução da malha (mm)", "Grid Size da malha alta.", 0.1),
-                 ("entregaveis", "O que entregar", "nuvem+malha, só a nuvem (mais rápido) ou só a malha.", "nuvem+malha"),
-                 ("furos", "Fechar furos da malha", "Hole Filling do Revo. Pode fechar aberturas reais da peça.", None)]),
+    dict(
+        id="placa",
+        icone="✂",
+        titulo="Limpar e entregar o .revo",
+        sub="Peça apoiada ou suspensa sobre uma placa-gabarito. Fica só a peça; nada é aberto no Revo.",
+        script="limpar_por_placa.py",
+        fixos=[],
+        saida_flag="--saida",
+        saida_padrao="{SAIDA}\\{NOME}_limpo",
+        extras=[("--diagnostico", "{TRABALHO}\\{NOME}_diagnostico")],
+        entrega="revo",
+        campos=[
+            (
+                "altura_min",
+                "Altura mínima sobre a placa (mm)",
+                "Tudo abaixo disso é placa, parafuso ou suporte baixo. "
+                "Aumente se sobrar a base; diminua se a limpeza cortar a peça.",
+                16.0,
+            ),
+            ("componentes", "Quantas peças manter", "1 mantém só o maior objeto conectado acima da placa.", 1),
+        ],
+    ),
+    dict(
+        id="mesa",
+        icone="🧹",
+        titulo="Limpar a mesa e entregar o .revo",
+        sub="Peça pousada na mesa. Remove a mesa ao redor da peça; nada é aberto no Revo.",
+        script="rodar_tudo.py",
+        fixos=["--so-limpar"],
+        saida_flag="--saida-limpo",
+        saida_padrao="{SAIDA}\\{NOME}_limpo",
+        extras=[],
+        entrega="revo",
+        campos=[
+            (
+                "periferia_mm",
+                "Remover a mesa além de (mm)",
+                "Distância da peça a partir da qual a mesa é apagada (receita validada: 5).",
+                5.0,
+            ),
+            ("periferia_banda", "Espessura da faixa da mesa (mm)", "Receita validada: 12.", 12.0),
+            (
+                "periferia_alargue",
+                "Alargue da base (mm)",
+                "Quanto relevo baixo ainda conta como peça. Receita validada: 10.",
+                10.0,
+            ),
+        ],
+    ),
+    dict(
+        id="completo",
+        icone="⚙",
+        titulo="Pipeline completo no Revo",
+        sub="Limpa, funde no Revo Scan e exporta nuvem e/ou malha. Usa o mouse: não mexa no PC enquanto roda.",
+        script="rodar_tudo.py",
+        fixos=[],
+        saida_flag="--saida-ply",
+        saida_padrao="{SAIDA}\\{NOME}_resultado",
+        extras=[("--saida-limpo", "{TRABALHO}\\{NOME}_limpo")],
+        entrega="pasta",
+        campos=[
+            ("ponto", "Resolução da nuvem (mm)", "Point Distance da fusão. Menor = mais detalhe e mais pesado.", 0.1),
+            ("malha", "Tipo de malha", "alta = Poisson de alta qualidade; rapida = Fast Meshing.", "alta"),
+            ("grade", "Resolução da malha (mm)", "Grid Size da malha alta.", 0.1),
+            ("entregaveis", "O que entregar", "nuvem+malha, só a nuvem (mais rápido) ou só a malha.", "nuvem+malha"),
+            ("furos", "Fechar furos da malha", "Hole Filling do Revo. Pode fechar aberturas reais da peça.", None),
+        ],
+    ),
 ]
 
 
@@ -69,14 +126,19 @@ class PaginaInicio(QWidget):
         lay.setSpacing(14)
         t = QLabel("Início")
         t.setObjectName("h1")
-        s = QLabel("Escolha o projeto, o que você quer fazer e clique em Iniciar. As ferramentas completas ficam no menu à esquerda.")
+        s = QLabel(
+            "Escolha o projeto, o que você quer fazer e clique em Iniciar. As ferramentas completas ficam no menu à esquerda."
+        )
         s.setObjectName("suave")
         s.setWordWrap(True)
         lay.addWidget(t)
         lay.addWidget(s)
 
         # ---- 1. projeto
-        f1, l1 = cartao("1   Projeto", "A pasta do projeto é a que contém o arquivo .revo. Você também pode arrastá-la para esta janela.")
+        f1, l1 = cartao(
+            "1   Projeto",
+            "A pasta do projeto é a que contém o arquivo .revo. Você também pode arrastá-la para esta janela.",
+        )
         ln = QHBoxLayout()
         ln.setSpacing(14)
         b = QPushButton("Escolher pasta do projeto…")
@@ -224,8 +286,11 @@ class PaginaInicio(QWidget):
         ctx = self.app.estado.ctx
         scans = self.app.scans_projeto()
         ok = bool(ctx.get("projeto")) and bool(scans)
-        self.lbl_proj.setText(f"{os.path.basename(ctx['projeto'])}   ·   {len(scans)} scan(s)\n{ctx['projeto']}" if ok else
-                              "Nenhum projeto selecionado. Escolha a pasta que contém o arquivo .revo.")
+        self.lbl_proj.setText(
+            f"{os.path.basename(ctx['projeto'])}   ·   {len(scans)} scan(s)\n{ctx['projeto']}"
+            if ok
+            else "Nenhum projeto selecionado. Escolha a pasta que contém o arquivo .revo."
+        )
         self.faixa.setVisible(ok)
         self.checks = {}
         if ok:
@@ -298,7 +363,9 @@ class PaginaInicio(QWidget):
         cab = QLabel("Onde salvar o resultado")
         cab.setStyleSheet("font-weight:600")
         v.addWidget(cab)
-        ajuda = QLabel("Uma pasta nova (os scripts nunca sobrescrevem). {SAIDA} e {NOME} vêm da página Projeto e pastas.")
+        ajuda = QLabel(
+            "Uma pasta nova (os scripts nunca sobrescrevem). {SAIDA} e {NOME} vêm da página Projeto e pastas."
+        )
         ajuda.setObjectName("ajuda")
         v.addWidget(ajuda)
         saida = CampoTexto(app=self.app, caminho=False)
@@ -327,9 +394,15 @@ class PaginaInicio(QWidget):
         return w, {"saida": saida, "linhas": linhas, "resolvido": res}
 
     def _pasta_saida(self, campo):
-        p = QFileDialog.getExistingDirectory(self, "Pasta onde criar o resultado", substituir(self.app.estado.ctx.get("saida", ""), self.app.estado.ctx))
+        p = QFileDialog.getExistingDirectory(
+            self, "Pasta onde criar o resultado", substituir(self.app.estado.ctx.get("saida", ""), self.app.estado.ctx)
+        )
         if p:
-            campo.ed.setText(os.path.join(os.path.normpath(p), "{NOME}_limpo" if self.tarefa["entrega"] == "revo" else "{NOME}_resultado"))
+            campo.ed.setText(
+                os.path.join(
+                    os.path.normpath(p), "{NOME}_limpo" if self.tarefa["entrega"] == "revo" else "{NOME}_resultado"
+                )
+            )
 
     def comando(self):
         tf, ctx = self.tarefa, self.app.estado.ctx
@@ -340,7 +413,15 @@ class PaginaInicio(QWidget):
         if not saida:
             raise ValueError("Escolha a pasta de saída")
         item = _item(tf["script"])
-        a = [self.app.estado.env["python"], "-u", item["caminho"], ctx["projeto"], *tf["fixos"], tf["saida_flag"], saida]
+        a = [
+            self.app.estado.env["python"],
+            "-u",
+            item["caminho"],
+            ctx["projeto"],
+            *tf["fixos"],
+            tf["saida_flag"],
+            saida,
+        ]
         for flag, val in tf["extras"]:
             a += [flag, substituir(val, ctx)]
         for lp in d["linhas"].values():
@@ -359,7 +440,8 @@ class PaginaInicio(QWidget):
             self.b_ini.setEnabled(True)
             ja = os.path.exists(saida) and (not os.path.isdir(saida) or bool(os.listdir(saida)))
             self.paineis[self.tarefa["id"]][1]["resolvido"].setText(
-                f"Será salvo em: {saida}" + ("   ⚠ já existe: ao iniciar eu sugiro um nome novo" if ja else ""))
+                f"Será salvo em: {saida}" + ("   ⚠ já existe: ao iniciar eu sugiro um nome novo" if ja else "")
+            )
         except ValueError as e:
             self.previa.setText("⚠ " + str(e))
             self.b_ini.setEnabled(False)
@@ -375,8 +457,11 @@ class PaginaInicio(QWidget):
             novo, n = saida, 2
             while os.path.exists(novo):
                 novo, n = f"{saida}_{n}", n + 1
-            r = QMessageBox.question(self, "A pasta já existe", f"{saida}\njá existe e tem conteúdo (os scripts não sobrescrevem).\n\n"
-                                     f"Usar uma pasta nova?\n{novo}")
+            r = QMessageBox.question(
+                self,
+                "A pasta já existe",
+                f"{saida}\njá existe e tem conteúdo (os scripts não sobrescrevem).\n\nUsar uma pasta nova?\n{novo}",
+            )
             if r != QMessageBox.Yes:
                 return
             d = self.paineis[self.tarefa["id"]][1]["saida"].ed
@@ -431,9 +516,13 @@ class PaginaInicio(QWidget):
             elif atual and "PULADO" in t:
                 linhas.append((atual, "—", "—", "pulado (calibração ruim): copiado sem alteração"))
         if linhas:
-            rows = "".join(f"<tr><td>{a}</td><td align=right>&nbsp;&nbsp;{b}</td><td align=right>&nbsp;&nbsp;{c}</td><td>&nbsp;&nbsp;{d if not d.isdigit() else d + '% mantidos'}</td></tr>"
-                           for a, b, c, d in linhas)
-            self.resumo.setText(f"<table><tr><th align=left>scan</th><th>&nbsp;&nbsp;pontos antes</th><th>&nbsp;&nbsp;depois</th><th></th></tr>{rows}</table>")
+            rows = "".join(
+                f"<tr><td>{a}</td><td align=right>&nbsp;&nbsp;{b}</td><td align=right>&nbsp;&nbsp;{c}</td><td>&nbsp;&nbsp;{d if not d.isdigit() else d + '% mantidos'}</td></tr>"
+                for a, b, c, d in linhas
+            )
+            self.resumo.setText(
+                f"<table><tr><th align=left>scan</th><th>&nbsp;&nbsp;pontos antes</th><th>&nbsp;&nbsp;depois</th><th></th></tr>{rows}</table>"
+            )
         # imagem antes/depois
         extras = [v for f, v in self.tarefa["extras"] if f == "--diagnostico"]
         pastas = [substituir(extras[0], self.app.estado.ctx)] if extras else []
@@ -465,13 +554,33 @@ class PaginaInicio(QWidget):
 
     def abrir_revo(self):
         import psutil
+
         if any(p.info["name"] == "RevoScan6.exe" for p in psutil.process_iter(["name"])):
-            QMessageBox.information(self, "Revo Scan aberto", "O Revo Scan já está aberto. Feche-o (salvando o que precisar) e clique de novo: "
-                                    "a automação não mexe em uma sessão aberta por você.")
+            QMessageBox.information(
+                self,
+                "Revo Scan aberto",
+                "O Revo Scan já está aberto. Feche-o (salvando o que precisar) e clique de novo: "
+                "a automação não mexe em uma sessão aberta por você.",
+            )
             return
-        if QMessageBox.question(self, "Abrir no Revo Scan", "Vou importar o projeto na biblioteca do Revo e abrir o primeiro scan.\n"
-                                "Isso usa o mouse: não mexa no PC até terminar. Continuar?") != QMessageBox.Yes:
+        if (
+            QMessageBox.question(
+                self,
+                "Abrir no Revo Scan",
+                "Vou importar o projeto na biblioteca do Revo e abrir o primeiro scan.\n"
+                "Isso usa o mouse: não mexa no PC até terminar. Continuar?",
+            )
+            != QMessageBox.Yes
+        ):
             return
-        job = {"nome": "Abrir no Revo Scan", "argv": [self.app.estado.env["python"], "-u", os.path.join(catalog.PIPE, "abrir_no_revo.py"), self.revo_saida]}
+        job = {
+            "nome": "Abrir no Revo Scan",
+            "argv": [
+                self.app.estado.env["python"],
+                "-u",
+                os.path.join(catalog.PIPE, "abrir_no_revo.py"),
+                self.revo_saida,
+            ],
+        }
         self.rodando_aqui = False
         self.app.executar([job])

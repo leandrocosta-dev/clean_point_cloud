@@ -1,23 +1,58 @@
 """Paginas da interface."""
+
 import datetime
 import json
 import os
 import shutil
 import subprocess
 import threading
-import time
 
 from PySide6.QtCore import QObject, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QTextCharFormat, QTextCursor
-from PySide6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox,
-                               QFileDialog, QFormLayout, QFrame, QHBoxLayout, QHeaderView, QInputDialog, QLabel, QLineEdit, QMenu,
-                               QMessageBox, QPlainTextEdit, QPushButton, QScrollArea, QSpinBox, QSplitter, QStackedWidget,
-                               QTableWidget, QTableWidgetItem, QTabWidget, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (
+    QAbstractItemView,
+    QApplication,
+    QCheckBox,
+    QDialog,
+    QDialogButtonBox,
+    QFileDialog,
+    QFormLayout,
+    QFrame,
+    QHBoxLayout,
+    QHeaderView,
+    QInputDialog,
+    QLabel,
+    QLineEdit,
+    QMenu,
+    QMessageBox,
+    QPlainTextEdit,
+    QPushButton,
+    QScrollArea,
+    QSplitter,
+    QStackedWidget,
+    QTableWidget,
+    QTableWidgetItem,
+    QTabWidget,
+    QTreeWidget,
+    QTreeWidgetItem,
+    QVBoxLayout,
+    QWidget,
+)
 
-import runner as RN
-from core import (PRESETS_DIR, cabecalho_ply, citar, dividir, humano, ler_projeto, listar_projetos, substituir, tamanho_pasta)
-from receitas import RECEITAS
-from widgets import CampoTexto, Combo, FormScript, ScanPicker, SpinDbl, SpinInt, cartao
+from gui import runner as RN
+from gui.core import (
+    PRESETS_DIR,
+    cabecalho_ply,
+    citar,
+    dividir,
+    humano,
+    ler_projeto,
+    listar_projetos,
+    substituir,
+    tamanho_pasta,
+)
+from gui.receitas import RECEITAS
+from gui.widgets import CampoTexto, Combo, FormScript, SpinDbl, SpinInt, cartao
 
 
 def titulo_pagina(titulo, sub):
@@ -64,7 +99,12 @@ class Console(QPlainTextEdit):
         self.pal = pal
 
     def escrever(self, texto, tipo="out"):
-        cor = {"out": self.pal["texto"], "info": self.pal["acento"], "erro": self.pal["erro"], "ok": self.pal["ok"]}.get(tipo, self.pal["texto"])
+        cor = {
+            "out": self.pal["texto"],
+            "info": self.pal["acento"],
+            "erro": self.pal["erro"],
+            "ok": self.pal["ok"],
+        }.get(tipo, self.pal["texto"])
         fmt = QTextCharFormat()
         fmt.setForeground(QColor(cor))
         bar = self.verticalScrollBar()
@@ -91,8 +131,13 @@ class PaginaProjeto(QWidget):
         lay = QVBoxLayout(self)
         lay.setContentsMargins(28, 22, 28, 12)
         lay.setSpacing(12)
-        lay.addWidget(titulo_pagina("Projeto e contexto", "Escolha o projeto do Revo Scan e as pastas de trabalho. Os valores viram variáveis "
-                                    "({PROJETO}, {SAIDA}, {TRABALHO}, {NOME}) que podem ser usadas em qualquer campo de caminho."))
+        lay.addWidget(
+            titulo_pagina(
+                "Projeto e contexto",
+                "Escolha o projeto do Revo Scan e as pastas de trabalho. Os valores viram variáveis "
+                "({PROJETO}, {SAIDA}, {TRABALHO}, {NOME}) que podem ser usadas em qualquer campo de caminho.",
+            )
+        )
         c = app.estado.ctx
         f, fl = cartao("Pastas")
         form = QFormLayout()
@@ -128,7 +173,10 @@ class PaginaProjeto(QWidget):
         fl.addWidget(self.aviso)
         lay.addWidget(f)
 
-        f2, fl2 = cartao("Scans do projeto", "Marque os scans que as ferramentas devem usar. A seleção alimenta os campos de scans e as receitas.")
+        f2, fl2 = cartao(
+            "Scans do projeto",
+            "Marque os scans que as ferramentas devem usar. A seleção alimenta os campos de scans e as receitas.",
+        )
         self.tab = QTableWidget(0, 6)
         self.tab.setHorizontalHeaderLabels(["", "Scan", "Formato", "fuse.ply", "fuse_mesh.ply", "Tamanho"])
         self.tab.verticalHeader().setVisible(False)
@@ -143,8 +191,12 @@ class PaginaProjeto(QWidget):
         self.tab.itemChanged.connect(self._marcou)
         fl2.addWidget(self.tab, 1)
         bl = QHBoxLayout()
-        for txt, fn in (("Todos", lambda: self._todos(True)), ("Nenhum", lambda: self._todos(False)),
-                        ("Só frames.dataset", self._so_novos), ("Abrir pasta do projeto", self._abrir)):
+        for txt, fn in (
+            ("Todos", lambda: self._todos(True)),
+            ("Nenhum", lambda: self._todos(False)),
+            ("Só frames.dataset", self._so_novos),
+            ("Abrir pasta do projeto", self._abrir),
+        ):
             b = QPushButton(txt)
             b.setObjectName("mini")
             b.clicked.connect(fn)
@@ -168,13 +220,17 @@ class PaginaProjeto(QWidget):
 
     def _salvar(self):
         c = self.app.estado.ctx
-        c["raiz"], c["saida"], c["trabalho"] = self.raiz.ed.text().strip(), self.saida.ed.text().strip(), self.trab.ed.text().strip()
+        c["raiz"], c["saida"], c["trabalho"] = (
+            self.raiz.ed.text().strip(),
+            self.saida.ed.text().strip(),
+            self.trab.ed.text().strip(),
+        )
         self.app.salvar_depois()
 
     def _escolher_projeto(self):
         p = QFileDialog.getExistingDirectory(self, "Pasta do projeto (contém o .revo)", self.raiz.ed.text() or "")
         if p:
-            self.raiz.ed.setText(os.path.normpath(p))      # a recarga automatica seleciona o projeto
+            self.raiz.ed.setText(os.path.normpath(p))  # a recarga automatica seleciona o projeto
 
     def recarregar(self):
         projs = listar_projetos(self.raiz.ed.text())
@@ -187,7 +243,9 @@ class PaginaProjeto(QWidget):
         self.combo.setCurrentText(escolha)
         self.combo.blockSignals(False)
         if projs:
-            self.aviso.setText(f"{len(projs)} projeto(s) encontrado(s)" + ("" if escolha else " — escolha um na lista."))
+            self.aviso.setText(
+                f"{len(projs)} projeto(s) encontrado(s)" + ("" if escolha else " — escolha um na lista.")
+            )
         else:
             self.aviso.setText("Nenhum .revo encontrado nessa pasta nem até 2 níveis abaixo dela. Confira o caminho.")
         self._projeto(escolha)
@@ -205,7 +263,13 @@ class PaginaProjeto(QWidget):
             it.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled)
             it.setCheckState(Qt.Checked if s["guid"] in sel else Qt.Unchecked)
             self.tab.setItem(r, 0, it)
-            for c, v in ((1, s["guid"]), (2, s["formato"]), (3, "sim" if s["fuse"] else "não"), (4, "sim" if s["malha"] else "não"), (5, "…")):
+            for c, v in (
+                (1, s["guid"]),
+                (2, s["formato"]),
+                (3, "sim" if s["fuse"] else "não"),
+                (4, "sim" if s["malha"] else "não"),
+                (5, "…"),
+            ):
                 self.tab.setItem(r, c, QTableWidgetItem(v))
         self.tab.blockSignals(False)
         self.resumo.setText(f"{len(scans)} scan(s)" + (f"  ·  {revo}" if revo else ""))
@@ -223,8 +287,11 @@ class PaginaProjeto(QWidget):
             self.tab.item(r, 5).setText(humano(n))
 
     def _marcou(self, _):
-        self.app.estado.ctx["scans"] = [self.tab.item(r, 1).text() for r in range(self.tab.rowCount())
-                                        if self.tab.item(r, 0).checkState() == Qt.Checked]
+        self.app.estado.ctx["scans"] = [
+            self.tab.item(r, 1).text()
+            for r in range(self.tab.rowCount())
+            if self.tab.item(r, 0).checkState() == Qt.Checked
+        ]
         self.resumo.setText(f"{len(self.scans)} scan(s)  ·  {len(self.app.estado.ctx['scans'])} selecionado(s)")
         self.app.salvar_depois()
 
@@ -232,7 +299,9 @@ class PaginaProjeto(QWidget):
         """Marca na tabela so estes scans (lista vazia = todos). Usado pela pagina Inicio."""
         self.tab.blockSignals(True)
         for r in range(self.tab.rowCount()):
-            self.tab.item(r, 0).setCheckState(Qt.Checked if (not guids or self.tab.item(r, 1).text() in guids) else Qt.Unchecked)
+            self.tab.item(r, 0).setCheckState(
+                Qt.Checked if (not guids or self.tab.item(r, 1).text() in guids) else Qt.Unchecked
+            )
         self.tab.blockSignals(False)
         self.app.estado.ctx["scans"] = list(guids)
         self.resumo.setText(f"{len(self.scans)} scan(s)  ·  {len(guids) or len(self.scans)} selecionado(s)")
@@ -279,7 +348,14 @@ class PaginaScript(QWidget):
         cab.addWidget(chip, 0, Qt.AlignVCenter)
         cab.addStretch()
         raiz.addLayout(cab)
-        sub = QLabel(item["rel"] + ("   ·   parâmetros descritos manualmente (lê sys.argv)" if item["manual"] else f"   ·   {len(item['params'])} parâmetros lidos do script"))
+        sub = QLabel(
+            item["rel"]
+            + (
+                "   ·   parâmetros descritos manualmente (lê sys.argv)"
+                if item["manual"]
+                else f"   ·   {len(item['params'])} parâmetros lidos do script"
+            )
+        )
         sub.setObjectName("ajuda")
         raiz.addWidget(sub)
         doc = (item["descricao"] or "").strip()
@@ -361,7 +437,9 @@ class PaginaScript(QWidget):
             ok = True
         except ValueError as e:
             self.previa.setPlainText("⚠ " + str(e))
-            self.previa.setStyleSheet(f"font-family:'Cascadia Mono',Consolas,monospace;font-size:12px;color:{self.app.pal['aviso']}")
+            self.previa.setStyleSheet(
+                f"font-family:'Cascadia Mono',Consolas,monospace;font-size:12px;color:{self.app.pal['aviso']}"
+            )
             ok = False
         self.b_run.setEnabled(True)
         self.app.estado.d["form"][self.item["id"]] = self.form.valores()
@@ -375,11 +453,20 @@ class PaginaScript(QWidget):
             QMessageBox.warning(self, "Parâmetros pendentes", str(e))
             return None
         # os scripts recusam destino que ja tem conteudo (nunca sobrescrevem): avisa antes de gastar a execucao
-        ocupados = [argv[i + 1] for i, a in enumerate(argv[:-1]) if a in ("--saida", "--saida-limpo", "--saida-uniao")
-                    and os.path.exists(argv[i + 1]) and (not os.path.isdir(argv[i + 1]) or os.listdir(argv[i + 1]))]
+        ocupados = [
+            argv[i + 1]
+            for i, a in enumerate(argv[:-1])
+            if a in ("--saida", "--saida-limpo", "--saida-uniao")
+            and os.path.exists(argv[i + 1])
+            and (not os.path.isdir(argv[i + 1]) or os.listdir(argv[i + 1]))
+        ]
         if ocupados:
-            QMessageBox.warning(self, "Destino já existe", "Estas pastas já existem e têm conteúdo; o script se recusa a sobrescrever.\n"
-                                "Escolha um nome novo ou apague/mova a pasta:\n\n" + "\n".join(ocupados))
+            QMessageBox.warning(
+                self,
+                "Destino já existe",
+                "Estas pastas já existem e têm conteúdo; o script se recusa a sobrescrever.\n"
+                "Escolha um nome novo ou apague/mova a pasta:\n\n" + "\n".join(ocupados),
+            )
             return None
         return {"nome": self.item["titulo"], "argv": argv}
 
@@ -438,7 +525,9 @@ class PaginaScript(QWidget):
         os.remove(os.path.join(self._pasta_presets(), n + ".json"))
 
     def _exportar_preset(self):
-        p, _ = QFileDialog.getSaveFileName(self, "Exportar valores", self.item["id"].replace("/", "_") + ".json", "JSON (*.json)")
+        p, _ = QFileDialog.getSaveFileName(
+            self, "Exportar valores", self.item["id"].replace("/", "_") + ".json", "JSON (*.json)"
+        )
         if p:
             with open(p, "w", encoding="utf-8") as f:
                 json.dump(self.form.valores(), f, indent=1, ensure_ascii=False)
@@ -499,8 +588,14 @@ class PaginaScripts(QWidget):
 
     def _filtra(self, txt):
         txt = txt.lower().strip()
-        achados = {i["id"] for i in self.app.itens if not txt or txt in i["titulo"].lower() or txt in i["rel"].lower()
-                   or any(txt in (p["flag"] or p["dest"]).lower() or txt in p["ajuda"].lower() for p in i["params"])}
+        achados = {
+            i["id"]
+            for i in self.app.itens
+            if not txt
+            or txt in i["titulo"].lower()
+            or txt in i["rel"].lower()
+            or any(txt in (p["flag"] or p["dest"]).lower() or txt in p["ajuda"].lower() for p in i["params"])
+        }
         for i in range(self.arvore.topLevelItemCount()):
             cat = self.arvore.topLevelItem(i)
             vis = 0
@@ -531,11 +626,20 @@ class PaginaScripts(QWidget):
 
 # =============================================================================== pipeline
 MODELOS_PIPELINE = {
-    "Só limpar → entregar .revo limpo (sem Revo)": {"so_limpar": True, "periferia_mm": 5.0, "periferia_banda": 12.0, "periferia_alargue": 10.0},
+    "Só limpar → entregar .revo limpo (sem Revo)": {
+        "so_limpar": True,
+        "periferia_mm": 5.0,
+        "periferia_banda": 12.0,
+        "periferia_alargue": 10.0,
+    },
     "Rápido (malha rápida, ponto automático)": {"malha": "rapida", "otimizar": "baixo"},
     "Alta resolução 0,1 mm": {"ponto": 0.1, "malha": "alta", "grade": 0.1, "furos": False},
     "Resolução média 0,4 mm": {"ponto": 0.4, "malha": "alta", "grade": 0.4},
-    "Remover mesa (receita validada 5/12/10)": {"periferia_mm": 5.0, "periferia_banda": 12.0, "periferia_alargue": 10.0},
+    "Remover mesa (receita validada 5/12/10)": {
+        "periferia_mm": 5.0,
+        "periferia_banda": 12.0,
+        "periferia_alargue": 10.0,
+    },
     "Só nuvem (sem malha)": {"entregaveis": "nuvem"},
     "Duas partes viradas (lados opostos)": {"lados": "opostos"},
 }
@@ -546,7 +650,9 @@ def pagina_pipeline(app):
     w = QWidget()
     lay = QVBoxLayout(w)
     lay.setContentsMargins(28, 22, 28, 12)
-    lay.addWidget(PaginaScript({**item, "titulo": "Pipeline completo", "categoria": "Receitas A e B"}, app, MODELOS_PIPELINE), 1)
+    lay.addWidget(
+        PaginaScript({**item, "titulo": "Pipeline completo", "categoria": "Receitas A e B"}, app, MODELOS_PIPELINE), 1
+    )
     return w
 
 
@@ -558,8 +664,13 @@ class PaginaFila(QWidget):
         lay = QVBoxLayout(self)
         lay.setContentsMargins(28, 22, 28, 12)
         lay.setSpacing(10)
-        lay.addWidget(titulo_pagina("Fila e execução", "As etapas rodam uma de cada vez, na prioridade escolhida em Ambiente (padrão alta). Em caso de crash do Open3D a etapa é repetida "
-                                    "(Ambiente → tentativas)."))
+        lay.addWidget(
+            titulo_pagina(
+                "Fila e execução",
+                "As etapas rodam uma de cada vez, na prioridade escolhida em Ambiente (padrão alta). Em caso de crash do Open3D a etapa é repetida "
+                "(Ambiente → tentativas).",
+            )
+        )
         sp = QSplitter(Qt.Vertical)
         topo = QWidget()
         tl = QVBoxLayout(topo)
@@ -600,8 +711,13 @@ class PaginaFila(QWidget):
         self.b_stop.setEnabled(False)
         bl.addWidget(self.b_run)
         bl.addWidget(self.b_stop)
-        for txt, fn in (("↑", lambda: self.mover(-1)), ("↓", lambda: self.mover(1)), ("Editar", lambda: self.editar(self.tab.currentRow(), 0)),
-                        ("Remover", self.remover), ("Limpar", self.limpar)):
+        for txt, fn in (
+            ("↑", lambda: self.mover(-1)),
+            ("↓", lambda: self.mover(1)),
+            ("Editar", lambda: self.editar(self.tab.currentRow(), 0)),
+            ("Remover", self.remover),
+            ("Limpar", self.limpar),
+        ):
             b = QPushButton(txt)
             b.setObjectName("mini")
             b.clicked.connect(fn)
@@ -801,7 +917,12 @@ class PaginaEntregaveis(QWidget):
         lay = QVBoxLayout(self)
         lay.setContentsMargins(28, 22, 28, 12)
         lay.setSpacing(12)
-        lay.addWidget(titulo_pagina("Entregáveis", "Veja o que o pipeline gerou, abra no MeshInspector e monte a pasta final de entrega com um LEIA-ME."))
+        lay.addWidget(
+            titulo_pagina(
+                "Entregáveis",
+                "Veja o que o pipeline gerou, abra no MeshInspector e monte a pasta final de entrega com um LEIA-ME.",
+            )
+        )
         f, fl = cartao("Pasta de resultados")
         ln = QHBoxLayout()
         self.origem = CampoTexto(app=app, placeholder="pasta com os .ply / .revo gerados")
@@ -828,15 +949,23 @@ class PaginaEntregaveis(QWidget):
             self.tab.setColumnWidth(i, w)
         lay.addWidget(self.tab, 1)
         bl = QHBoxLayout()
-        for txt, fn in (("Marcar todos", lambda: self._marca(True)), ("Desmarcar", lambda: self._marca(False)),
-                        ("Abrir no MeshInspector", self.mesh), ("Mostrar na pasta", self.mostrar), ("Copiar caminho", self.copiar)):
+        for txt, fn in (
+            ("Marcar todos", lambda: self._marca(True)),
+            ("Desmarcar", lambda: self._marca(False)),
+            ("Abrir no MeshInspector", self.mesh),
+            ("Mostrar na pasta", self.mostrar),
+            ("Copiar caminho", self.copiar),
+        ):
             b = QPushButton(txt)
             b.setObjectName("mini")
             b.clicked.connect(fn)
             bl.addWidget(b)
         bl.addStretch()
         lay.addLayout(bl)
-        f2, fl2 = cartao("Montar pasta de entrega", "Copia os arquivos marcados para uma pasta nova (nunca sobrescreve) e escreve o LEIA-ME.md.")
+        f2, fl2 = cartao(
+            "Montar pasta de entrega",
+            "Copia os arquivos marcados para uma pasta nova (nunca sobrescreve) e escreve o LEIA-ME.md.",
+        )
         l2 = QHBoxLayout()
         self.destino = CampoTexto(app=app, placeholder="pasta de entrega (será criada)")
         self.leia = QCheckBox("LEIA-ME.md")
@@ -858,13 +987,17 @@ class PaginaEntregaveis(QWidget):
 
     def listar(self):
         raiz = substituir(self.origem.ed.text().strip(), self.app.estado.ctx)
-        ext = {0: None, 1: (".ply",), 2: (".revo",), 3: (".json",), 4: (".md",), 5: (".png",), 6: (".stl", ".obj")}[self.filtro.currentIndex()]
+        ext = {0: None, 1: (".ply",), 2: (".revo",), 3: (".json",), 4: (".md",), 5: (".png",), 6: (".stl", ".obj")}[
+            self.filtro.currentIndex()
+        ]
         self.arquivos = []
         if os.path.isdir(raiz):
             for r, _, fs in os.walk(raiz):
                 for n in fs:
                     p = os.path.join(r, n)
-                    if ext is None and not n.lower().endswith((".ply", ".revo", ".json", ".md", ".png", ".stl", ".obj", ".txt", ".csv")):
+                    if ext is None and not n.lower().endswith(
+                        (".ply", ".revo", ".json", ".md", ".png", ".stl", ".obj", ".txt", ".csv")
+                    ):
                         continue
                     if ext and not n.lower().endswith(ext):
                         continue
@@ -887,7 +1020,9 @@ class PaginaEntregaveis(QWidget):
                 pass
             if p.lower().endswith(".ply"):
                 i = cabecalho_ply(p)
-                self.tab.setItem(r, 4, QTableWidgetItem(f"{i['vertices']:,}".replace(",", ".") if "vertices" in i else ""))
+                self.tab.setItem(
+                    r, 4, QTableWidgetItem(f"{i['vertices']:,}".replace(",", ".") if "vertices" in i else "")
+                )
                 self.tab.setItem(r, 5, QTableWidgetItem(f"{i['faces']:,}".replace(",", ".") if "faces" in i else ""))
 
     def _marca(self, on):
@@ -937,16 +1072,27 @@ class PaginaEntregaveis(QWidget):
                 alvo = os.path.join(dest, os.path.basename(os.path.dirname(p)) + "_" + nome)
             shutil.copy2(p, alvo)
             i = cabecalho_ply(p) if p.lower().endswith(".ply") else {}
-            linhas.append(f"| {os.path.basename(alvo)} | {humano(os.path.getsize(p))} | {i.get('vertices', '')} | {i.get('faces', '')} |")
+            linhas.append(
+                f"| {os.path.basename(alvo)} | {humano(os.path.getsize(p))} | {i.get('vertices', '')} | {i.get('faces', '')} |"
+            )
         if self.leia.isChecked():
-            md = [f"# Entrega — {os.path.basename(self.app.estado.ctx.get('projeto', '').rstrip(chr(92)) or dest)}",
-                  f"\nGerada em {datetime.datetime.now():%Y-%m-%d %H:%M} pela GUI do pipeline.\n",
-                  "| arquivo | tamanho | vértices | triângulos |", "|---|---|---|---|", *linhas]
+            md = [
+                f"# Entrega — {os.path.basename(self.app.estado.ctx.get('projeto', '').rstrip(chr(92)) or dest)}",
+                f"\nGerada em {datetime.datetime.now():%Y-%m-%d %H:%M} pela GUI do pipeline.\n",
+                "| arquivo | tamanho | vértices | triângulos |",
+                "|---|---|---|---|",
+                *linhas,
+            ]
             if self.com_hist.isChecked():
                 h = RN.carregar_historico()[-12:]
                 if h:
-                    md += ["\n## Comandos executados (mais recentes)\n"] + [f"- `{x['quando']}` {x['nome']} (código {x['codigo']}): `{citar(x['argv'][2:])}`" for x in h]
-            md += ["\n## Observações\n", "Preencha aqui o que foi e o que não foi verificado (cobertura, furos, conferência visual)."]
+                    md += ["\n## Comandos executados (mais recentes)\n"] + [
+                        f"- `{x['quando']}` {x['nome']} (código {x['codigo']}): `{citar(x['argv'][2:])}`" for x in h
+                    ]
+            md += [
+                "\n## Observações\n",
+                "Preencha aqui o que foi e o que não foi verificado (cobertura, furos, conferência visual).",
+            ]
             with open(os.path.join(dest, "LEIA-ME.md"), "w", encoding="utf-8") as f:
                 f.write("\n".join(md))
         self.app.aviso(f"Entrega montada: {len(sel)} arquivo(s)")
@@ -962,10 +1108,16 @@ class PaginaJson(QWidget):
         lay = QVBoxLayout(self)
         lay.setContentsMargins(28, 22, 28, 12)
         lay.setSpacing(12)
-        lay.addWidget(titulo_pagina("Configurações JSON", "Edite arquivos de configuração (ex.: config.default.json, config.highres.json) como formulário."))
+        lay.addWidget(
+            titulo_pagina(
+                "Configurações JSON",
+                "Edite arquivos de configuração (ex.: config.default.json, config.highres.json) como formulário.",
+            )
+        )
         ln = QHBoxLayout()
         self.combo = Combo()
-        from catalog import PIPE
+        from gui.catalog import PIPE
+
         self.combo.setMinimumWidth(320)
         self.combo.setEditable(True)
         for f in sorted(os.listdir(PIPE)):
@@ -1036,12 +1188,13 @@ class PaginaJson(QWidget):
                 g = w.text
             else:
                 w = QLineEdit(json.dumps(v))
-                g = (lambda w=w: json.loads(w.text()))
+                g = lambda w=w: json.loads(w.text())
             self.arv.setItemWidget(it, 1, w)
             self.getters[c] = g
 
     def _dados(self):
         import copy
+
         d = copy.deepcopy(self.dados)
         for c, g in self.getters.items():
             o = d
@@ -1049,8 +1202,8 @@ class PaginaJson(QWidget):
                 o = o[k]
             try:
                 o[c[-1]] = g()
-            except ValueError:
-                raise ValueError(".".join(c))
+            except ValueError as exc:
+                raise ValueError(".".join(c)) from exc
         return d
 
     def salvar(self, como=False):
@@ -1070,7 +1223,7 @@ class PaginaJson(QWidget):
 
 
 # =============================================================================== ambiente
-DEPENDENCIAS = ["numpy", "scipy", "open3d", "meshlib", "pywinauto", "psutil", "PIL", "matplotlib", "PySide6"]
+DEPENDENCIAS = ["cupy", "numpy", "scipy", "open3d", "meshlib", "pywinauto", "psutil", "PIL", "matplotlib", "PySide6"]
 
 
 class PaginaAmbiente(QWidget):
@@ -1082,8 +1235,13 @@ class PaginaAmbiente(QWidget):
         lay = QVBoxLayout(w)
         lay.setContentsMargins(28, 22, 28, 12)
         lay.setSpacing(12)
-        lay.addWidget(titulo_pagina("Ambiente", "Como os comandos são executados. Padrão: prioridade alta e todos os processadores (REVO_RECURSOS=maximo); "
-                                    "use baixa só se as quedas antigas voltarem."))
+        lay.addWidget(
+            titulo_pagina(
+                "Ambiente",
+                "Como os comandos são executados. Padrão: prioridade alta e todos os processadores (REVO_RECURSOS=maximo); "
+                "use baixa só se as quedas antigas voltarem.",
+            )
+        )
         f, fl = cartao("Execução")
         form = QFormLayout()
         form.setHorizontalSpacing(16)
@@ -1102,8 +1260,10 @@ class PaginaAmbiente(QWidget):
         self.prio = Combo()
         self.prio.addItems(["alta", "acima", "normal", "baixa"])
         self.prio.setCurrentText(env.get("prioridade", "alta"))
-        self.prio.setToolTip("alta/acima/normal = todos os processadores (REVO_RECURSOS=maximo); "
-                             "baixa = BELOW_NORMAL e 12 threads (regra antiga do guia)")
+        self.prio.setToolTip(
+            "alta/acima/normal = todos os processadores (REVO_RECURSOS=maximo); "
+            "baixa = BELOW_NORMAL e 12 threads (regra antiga do guia)"
+        )
         self.pe = QCheckBox("Parar a fila no primeiro erro")
         self.pe.setChecked(bool(env["parar_no_erro"]))
         self.mi = CampoTexto(app=app)
@@ -1155,9 +1315,17 @@ class PaginaAmbiente(QWidget):
 
     def guardar(self):
         e = self.app.estado.env
-        e.update(python=self.py.ed.text().strip(), cwd=self.cwd.ed.text().strip(), omp_threads=self.omp.value(),
-                 tentativas_crash=self.tent.value(), prioridade=self.prio.currentText(), parar_no_erro=self.pe.isChecked(),
-                 meshinspector=self.mi.ed.text().strip(), revo=self.rv.ed.text().strip(), extra_env=self.ee.toPlainText())
+        e.update(
+            python=self.py.ed.text().strip(),
+            cwd=self.cwd.ed.text().strip(),
+            omp_threads=self.omp.value(),
+            tentativas_crash=self.tent.value(),
+            prioridade=self.prio.currentText(),
+            parar_no_erro=self.pe.isChecked(),
+            meshinspector=self.mi.ed.text().strip(),
+            revo=self.rv.ed.text().strip(),
+            extra_env=self.ee.toPlainText(),
+        )
         self.app.salvar_depois()
 
     def verificar(self):
@@ -1165,11 +1333,21 @@ class PaginaAmbiente(QWidget):
         res = []
         for m in DEPENDENCIAS:
             try:
-                r = subprocess.run([py, "-c", f"import {m}; print(getattr({m}, '__version__', 'ok'))"], capture_output=True, text=True, timeout=60)
+                r = subprocess.run(
+                    [py, "-c", f"import {m}; print(getattr({m}, '__version__', 'ok'))"],
+                    capture_output=True,
+                    text=True,
+                    timeout=60,
+                )
                 ok = r.returncode == 0
                 res.append((m, ok, r.stdout.strip() if ok else "ausente"))
-            except Exception as ex:
+            except (OSError, subprocess.SubprocessError) as ex:
                 res.append((m, False, type(ex).__name__))
         pal = self.app.pal
-        self.dep.setText("<br>".join(f"<span style='color:{pal['ok'] if ok else pal['erro']}'>{'●' if ok else '○'}</span> {m} "
-                                     f"<span style='color:{pal['suave']}'>{v}</span>" for m, ok, v in res))
+        self.dep.setText(
+            "<br>".join(
+                f"<span style='color:{pal['ok'] if ok else pal['erro']}'>{'●' if ok else '○'}</span> {m} "
+                f"<span style='color:{pal['suave']}'>{v}</span>"
+                for m, ok, v in res
+            )
+        )
