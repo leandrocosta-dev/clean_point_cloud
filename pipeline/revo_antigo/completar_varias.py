@@ -6,57 +6,77 @@ entram so triangulos (a) cujo deslocamento LATERAL ao vertice mais proximo da un
 >= 60% da vizinhanca de 3 mm tambem lacuna, em componentes >= --min-tri encostados na uniao (<= 2 mm). A base fica intocada;
 nada fecha furo; componentes minusculos nao entram (sem ilhas).
 """
+
 import argparse
+
+import geom_gpu as gg
+import gpu
 import numpy as np
 import open3d as o3d
-from scipy import ndimage as ndi
-from scipy.interpolate import RegularGridInterpolator
-from scipy.spatial import cKDTree
 
 
-def campo(V, B, nB, tB, celula=20.0):
-    d, i = tB.query(V); m = d < 4.0
-    vec = ((B[i[m]] - V[m]) * nB[i[m]]).sum(1)[:, None] * nB[i[m]]
-    lo = V.min(0) - celula; n = np.ceil((V.max(0) + celula - lo) / celula).astype(int) + 1
-    idx = np.floor((V[m] - lo) / celula).astype(int); S = np.zeros((*n, 3)); N = np.zeros(n); flat = np.ravel_multi_index(idx.T, n)
-    for k in np.unique(flat):
-        sel = flat == k
-        if sel.sum() >= 30:
-            ijk = np.unravel_index(k, n); S[ijk] = np.median(vec[sel], 0); N[ijk] = 1
-    Ss = np.stack([ndi.gaussian_filter(S[..., c], 1.0) for c in range(3)], -1); Ns = ndi.gaussian_filter(N, 1.0)
-    ok = Ns > 0.05; F = np.zeros_like(Ss); F[ok] = Ss[ok] / Ns[ok][:, None]
-    if not ok.any():
-        return lambda X: np.zeros_like(X)
-    _, near = ndi.distance_transform_edt(~ok, return_indices=True); F = F[tuple(near)]
-    g = [lo[c] + celula * np.arange(n[c]) for c in range(3)]
-    return RegularGridInterpolator(g, F, bounds_error=False, fill_value=None)
+def campo(V, B, nB, celula=20.0):
+    """Campo suave de deriva (GPU); ver geom_gpu.campo_deriva. Devolve f(X) -> deslocamento."""
+    return gg.campo_deriva(V, B, nB, celula)
 
 
 def main():
-    ap = argparse.ArgumentParser(); ap.add_argument("base"); ap.add_argument("outras", nargs="*"); ap.add_argument("--saida", required=True)
-    ap.add_argument("--lacuna", type=float, default=1.2); ap.add_argument("--min-tri", type=int, default=300); ap.add_argument("--corrigir", action="store_true"); ap.add_argument("--cos-parede", type=float, default=0.8)
+    ap = argparse.ArgumentParser()
+    ap.add_argument("base")
+    ap.add_argument("outras", nargs="*")
+    ap.add_argument("--saida", required=True)
+    ap.add_argument("--lacuna", type=float, default=1.2)
+    ap.add_argument("--min-tri", type=int, default=300)
+    ap.add_argument("--corrigir", action="store_true")
+    ap.add_argument("--cos-parede", type=float, default=0.8)
     a = ap.parse_args()
-    uniao = o3d.io.read_triangle_mesh(a.base); nbase = len(uniao.triangles)
+    xp = gpu.xp()
+    uniao = o3d.io.read_triangle_mesh(a.base)
+    nbase = len(uniao.triangles)
     for arq in a.outras:
-        m = o3d.io.read_triangle_mesh(arq); U = uniao; U.compute_vertex_normals()
-        B = np.asarray(U.vertices); nB = np.asarray(U.vertex_normals); tB = cKDTree(B); V = np.asarray(m.vertices).copy()
+        m = o3d.io.read_triangle_mesh(arq)
+        U = uniao
+        Uv, Uf = np.asarray(U.vertices), np.asarray(U.triangles)
+        B = gpu.para_gpu(Uv, np.float64)
+        nB = gg.normais_vertices(Uv, Uf, saida_gpu=True)
+        V = gpu.para_gpu(np.asarray(m.vertices), np.float64)
         if a.corrigir:
-            for _ in range(2): V = V + campo(V, B, nB, tB)(V)
-            m.vertices = o3d.utility.Vector3dVector(V)
-        F = np.asarray(m.triangles); cen = V[F].mean(1); dv, iv = tB.query(cen); disp = cen - B[iv]; nrm = (disp * nB[iv]).sum(1)
-        lat = np.sqrt(np.maximum((disp ** 2).sum(1) - nrm ** 2, 0)); # parede/degrau: normal do triangulo diferente da da base (pele duplicada tem normal paralela); precisa estar a > 1 mm
-        m.compute_triangle_normals(); tn = np.asarray(m.triangle_normals); cosang = np.abs((tn * nB[iv]).sum(1))
+            for _ in range(2):
+                V = V + campo(V, B, nB)(V)
+            m.vertices = o3d.utility.Vector3dVector(gpu.para_cpu(V))
+        F = np.asarray(m.triangles)
+        cen = gg.centros_triangulos(V, F, saida_gpu=True)
+        dv, iv = gpu.vizinho_mais_proximo(B, cen, dist_max=np.inf)
+        disp = cen - B[iv]
+        nrm = (disp * nB[iv]).sum(1)
+        lat = xp.sqrt(
+            xp.maximum((disp**2).sum(1) - nrm**2, 0)
+        )  # parede/degrau: normal do triangulo diferente da da base (pele duplicada tem normal paralela); precisa estar a > 1 mm
+        tn = gg.normais_triangulos(V, F, saida_gpu=True)
+        cosang = xp.abs((tn * nB[iv]).sum(1))
         lac = (lat > a.lacuna) | (dv > 6.0) | ((cosang < a.cos_parede) & (dv > 1.0))
-        if not lac.any():
-            print(f"{arq.split('/')[-1]}: nada fora da uniao"); continue
-        viz = cKDTree(cen).query_ball_point(cen[lac], 3.0); frac = np.array([lac[v].mean() for v in viz])
-        keep = np.zeros(len(F), bool); keep[np.flatnonzero(lac)[frac >= 0.6]] = True
-        P = o3d.geometry.TriangleMesh(m); P.remove_triangles_by_mask(~keep); P.remove_unreferenced_vertices()
-        cl, n, _ = P.cluster_connected_triangles(); cl = np.asarray(cl); n = np.asarray(n); Pv = np.asarray(P.vertices); Pt = np.asarray(P.triangles); ok = []
-        for c in np.flatnonzero(n >= a.min_tri):
-            if tB.query(Pv[np.unique(Pt[cl == c])])[0].min() <= 2.0: ok.append(c)
-        P.remove_triangles_by_mask(~np.isin(cl, ok)); P.remove_unreferenced_vertices()
-        print(f"{arq.split('/')[-1]}: +{len(P.triangles)} triangulos em {len(ok)} componentes"); uniao = uniao + P
+        if not bool(lac.any()):
+            print(f"{arq.split('/')[-1]}: nada fora da uniao")
+            continue
+        # fracao de triangulos "lacuna" entre os vizinhos a <= 3 mm de cada centroide-lacuna (contagens exatas, sem listas)
+        cl_ = cen[lac]
+        frac = gpu.contar_no_raio(cl_, cl_, 3.0) / gpu.contar_no_raio(cen, cl_, 3.0)
+        keep = xp.zeros(len(F), bool)
+        keep[xp.flatnonzero(lac)[frac >= 0.6]] = True
+        P = o3d.geometry.TriangleMesh(m)
+        P.remove_triangles_by_mask(~gpu.para_cpu(keep))
+        P.remove_unreferenced_vertices()
+        Pv, Pt = np.asarray(P.vertices), np.asarray(P.triangles)
+        cl, n = gg.componentes_triangulos(Pt, len(Pv), saida_gpu=True)
+        perto = (gpu.vizinho_mais_proximo(B, Pv, dist_max=2.0)[1] >= 0)[gpu.para_gpu(Pt)].any(
+            1
+        )  # triangulo com vertice a <= 2 mm da uniao
+        toca = xp.bincount(cl, weights=perto.astype(xp.float64), minlength=len(n)) > 0  # componente encostada na uniao
+        ok = xp.flatnonzero((n >= a.min_tri) & toca)
+        P.remove_triangles_by_mask(~gpu.para_cpu(xp.isin(cl, ok)))
+        P.remove_unreferenced_vertices()
+        print(f"{arq.split('/')[-1]}: +{len(P.triangles)} triangulos em {len(ok)} componentes")
+        uniao = uniao + P
     o3d.io.write_triangle_mesh(a.saida, uniao, write_vertex_normals=False)
     print("base", nbase, "-> total", len(uniao.triangles))
 

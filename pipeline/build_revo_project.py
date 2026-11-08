@@ -14,10 +14,9 @@ import json
 import os
 import shutil
 
+import geom_gpu as gg
+import gpu
 import numpy as np
-import open3d as o3d
-from scipy.sparse import coo_matrix
-from scipy.sparse.csgraph import connected_components
 
 
 def read_ply(path, has_faces):
@@ -36,8 +35,7 @@ def read_ply(path, has_faces):
 
 
 def write_ply(path, vert, faces=None):
-    h = ["ply", "format binary_little_endian 1.0", "comment created by revopoint 3D",
-         f"element vertex {len(vert)}"]
+    h = ["ply", "format binary_little_endian 1.0", "comment created by revopoint 3D", f"element vertex {len(vert)}"]
     h += [f"property float {p}" for p in ("x", "y", "z", "nx", "ny", "nz")]
     if faces is not None:
         h += [f"element face {len(faces)}", "property list uchar uint vertex_indices"]
@@ -52,47 +50,43 @@ def write_ply(path, vert, faces=None):
             f.write(rec.tobytes())
 
 
-def to_pcd(xyz):
-    p = o3d.geometry.PointCloud()
-    p.points = o3d.utility.Vector3dVector(xyz.astype(np.float64))
-    return p
-
-
 def part_indices(vert, plane_thresh, passes, eps_mult):
-    """Indices (no array original) dos pontos da peca."""
-    idx = np.arange(len(vert))
-    pcd = to_pcd(vert[:, :3])
-    nn = np.median(np.asarray(pcd.compute_nearest_neighbor_distance()))
+    """Indices (no array original) dos pontos da peca; mesa, DBSCAN e filtro estatistico na GPU."""
+    xp = gpu.xp()
+    P = gpu.para_gpu(vert[:, :3], xp.float64)
+    idx = xp.arange(len(P))
+    nn = float(xp.median(gpu.knn(P, P, 2)[0][:, 1]))  # espacamento mediano
     for i in range(passes):
-        _, inl = pcd.segment_plane(plane_thresh, 3, 2000)
-        if len(inl) < 0.25 * len(pcd.points):
+        _, inl = gg.ransac_plano_open3d(P, plane_thresh, 2000)
+        if len(inl) < 0.25 * len(P):
             break
         print(f"    plano {i}: {len(inl)} pts removidos")
-        keep = np.setdiff1d(np.arange(len(pcd.points)), inl)
-        pcd, idx = pcd.select_by_index(keep), idx[keep]
-    lab = np.array(pcd.cluster_dbscan(eps=nn * eps_mult, min_points=10))
-    k = np.where(lab == np.argmax(np.bincount(lab[lab >= 0])))[0]
-    pcd, idx = pcd.select_by_index(k), idx[k]
-    _, k = pcd.remove_statistical_outlier(20, 2.0)
-    return idx[np.asarray(k)], nn
+        manter = xp.ones(len(P), bool)
+        manter[gpu.para_gpu(inl)] = False
+        P, idx = P[manter], idx[manter]
+    k = gpu.para_gpu(gg.dbscan_maior(P, nn * eps_mult, 10))
+    P, idx = P[k], idx[k]
+    k = gpu.remover_soltos(P, k=19, desvios=2.0)  # SOR(20 vizinhos, 2 desvios)
+    return gpu.para_cpu(idx[k]), nn
 
 
 def clean_mesh(mverts, faces, kept_xyz, radius):
-    d = np.asarray(to_pcd(mverts[:, :3]).compute_point_cloud_distance(to_pcd(kept_xyz)))
+    """Mantem triangulos com os 3 vertices a < radius da nuvem mantida e so a maior componente (vertices ligados)."""
+    xp = gpu.xp()
+    d = gg.distancia_ate(kept_xyz, mverts[:, :3], saida_gpu=True)
     ok = d < radius
-    f = faces[ok[faces].all(axis=1)]
-    # maior componente conexa da malha
+    fg = gpu.para_gpu(faces).astype(xp.int64)
+    f = fg[ok[fg].all(axis=1)]
+    # maior componente conexa da malha (grafo de vertices; arestas f0-f1 e f1-f2)
     n = len(mverts)
-    g = coo_matrix((np.ones(len(f) * 2), (f[:, 0].tolist() + f[:, 1].tolist(),
-                                          f[:, 1].tolist() + f[:, 2].tolist())), shape=(n, n))
-    _, lab = connected_components(g, directed=False)
-    used = np.unique(f)
-    big = np.argmax(np.bincount(lab[used]))
+    lab = gg.rotulos_por_arestas(n, xp.concatenate([f[:, 0], f[:, 1]]), xp.concatenate([f[:, 1], f[:, 2]]))
+    used = xp.unique(f)
+    big = int(xp.argmax(xp.bincount(lab[used], minlength=n)))
     f = f[lab[f[:, 0]] == big]
-    used = np.unique(f)
-    remap = np.full(n, -1, np.int64)
-    remap[used] = np.arange(len(used))
-    return mverts[used], remap[f].astype(np.uint32)
+    used = xp.unique(f)
+    remap = xp.full(n, -1, xp.int64)
+    remap[used] = xp.arange(len(used))
+    return mverts[gpu.para_cpu(used)], gpu.para_cpu(remap[f]).astype(np.uint32)
 
 
 def main():

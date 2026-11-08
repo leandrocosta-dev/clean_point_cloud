@@ -1,8 +1,13 @@
 """Reotimiza o grafo de segmentos com varios pesos de odometria e mede o vies normal por celula nos pares."""
-import sys, os, json, pickle, time
-import numpy as np
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # legado/ -> pipeline/
+
+import json
+import os
+import pickle
+import sys
+import time
+
 import alinhar_segmentos as S
+import numpy as np
 from alinhar_varios import baixa_prioridade
 
 work = sys.argv[1]
@@ -42,5 +47,8 @@ for peso in [float(x) for x in sys.argv[3:]]:
     t = time.time()
     T, _ = S.otimizar(nos, [x.copy() for x in T0], odo, lacos, ref)
     m, p9 = vies(T)
-    print(f"peso odometria {peso:g}: vies normal por celula {m:.0f} um (p90 {p9:.0f}) [{time.time()-t:.0f}s]", flush=True)
+    print(
+        f"peso odometria {peso:g}: vies normal por celula {m:.0f} um (p90 {p9:.0f}) [{time.time() - t:.0f}s]",
+        flush=True,
+    )
     json.dump([x.tolist() for x in T], open(os.path.join(work, f"T_peso_{peso:g}.json"), "w"))

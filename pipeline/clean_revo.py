@@ -8,24 +8,31 @@ componente (a peca) -> SOR. Salva um PLY limpo por scan e um resumo.
 import argparse
 import os
 
+import geom_gpu as gg
+import gpu
 import numpy as np
 import open3d as o3d
 
 
 def clean(pcd, plane_thresh, plane_passes, eps_mult, sor_nn, sor_std):
-    nn = np.median(np.asarray(pcd.compute_nearest_neighbor_distance()))
+    """Mesa (RANSAC iterativo), maior componente DBSCAN e filtro estatistico: tudo na GPU (geom_gpu/gpu)."""
+    xp = gpu.xp()
+    P = gpu.para_gpu(np.asarray(pcd.points), xp.float64)
+    idx = xp.arange(len(P))
+    nn = float(xp.median(gpu.knn(P, P, 2)[0][:, 1]))  # espacamento mediano
     for i in range(plane_passes):
-        plane, inl = pcd.segment_plane(plane_thresh, 3, 2000)
+        plane, inl = gg.ransac_plano_open3d(P, plane_thresh, 2000)
         # so remove planos grandes (mesa), nao faces planas da peca
-        if len(inl) < 0.25 * len(pcd.points):
+        if len(inl) < 0.25 * len(P):
             break
         print(f"  plano {i}: {len(inl)} pts removidos")
-        pcd = pcd.select_by_index(inl, invert=True)
-    lab = np.array(pcd.cluster_dbscan(eps=nn * eps_mult, min_points=10))
-    keep = np.argmax(np.bincount(lab[lab >= 0]))
-    pcd = pcd.select_by_index(np.where(lab == keep)[0])
-    pcd, _ = pcd.remove_statistical_outlier(sor_nn, sor_std)
-    return pcd
+        manter = xp.ones(len(P), bool)
+        manter[gpu.para_gpu(inl)] = False
+        P, idx = P[manter], idx[manter]
+    k = gpu.para_gpu(gg.dbscan_maior(P, nn * eps_mult, 10))
+    P, idx = P[k], idx[k]
+    k = gpu.remover_soltos(P, k=sor_nn - 1, desvios=sor_std)  # SOR do Open3D: media dos sor_nn vizinhos (com o proprio)
+    return pcd.select_by_index(gpu.para_cpu(idx[k]))
 
 
 def main():

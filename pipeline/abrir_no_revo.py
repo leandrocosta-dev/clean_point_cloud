@@ -5,12 +5,11 @@
 O Revo Scan precisa estar fechado ou ser uma sessao em ingles aberta pela propria automacao; sessao do usuario
 em outra lingua e recusada por revo_ui.abrir(). Nao mexa no mouse durante a execucao.
 """
+
 import argparse
 import json
 import os
-import sys
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import revo_ui as R
 
 

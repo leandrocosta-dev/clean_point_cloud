@@ -5,11 +5,12 @@
 O Revo pode ignorar scans cujos IDs ja estao na biblioteca. Atualiza pastas,
 nodes e referencias JSON, incluindo merge_depends, sem alterar frames ou poses.
 """
+
 import argparse
 import json
-from pathlib import Path
 import shutil
 import uuid
+from pathlib import Path
 
 
 def substituir_ids(valor, mapa):
@@ -31,10 +32,10 @@ def reidentificar(arquivo):
     if len(set(ids)) != len(ids):
         raise ValueError("projeto contem IDs duplicados")
     for ident in ids:
-        if Path(ident).name != ident or ident in ('.', '..') or not (saida / "data" / ident).is_dir():
+        if Path(ident).name != ident or ident in (".", "..") or not (saida / "data" / ident).is_dir():
             raise ValueError(f"pasta de scan ausente ou ID invalido: {ident}")
     mapa = {ident: str(uuid.uuid4()) for ident in ids}
-    nomes = {mapa[n['guid']]: n['name'] for n in projeto['nodes']}
+    nomes = {mapa[n["guid"]]: n["name"] for n in projeto["nodes"]}
     for antigo, novo in mapa.items():
         pasta = saida / "data" / antigo
         for arq in pasta.rglob("*.rvproj"):
@@ -45,8 +46,8 @@ def reidentificar(arquivo):
     projeto["guid"] = str(uuid.uuid4())
     projeto["name"] = saida.name
     for node in projeto["nodes"]:
-        node["name"] = nomes[node['guid']] + "_COPIA"
-    projeto['size'] = str(sum(p.stat().st_size for p in (saida/'data').rglob('*') if p.is_file()))
+        node["name"] = nomes[node["guid"]] + "_COPIA"
+    projeto["size"] = str(sum(p.stat().st_size for p in (saida / "data").rglob("*") if p.is_file()))
     arquivo.write_text(json.dumps(projeto, indent=4), encoding="utf-8")
     (saida / "identificadores.json").write_text(json.dumps(mapa, indent=2), encoding="utf-8")
     return mapa

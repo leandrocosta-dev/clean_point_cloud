@@ -7,34 +7,41 @@ com dilatacao e fica com o MAIOR componente (a peca); marcadores, bolhas da mesa
 somem. Poses e o resto do projeto nao mudam. O original nao e tocado; o destino nao pode existir.
 Validado no scan 172242: 97,4% dos pixels ficam e 99,8% deles estao a < 1 mm do fuse.ply do Revo.
 """
+
 import argparse
 import os
 import shutil
 import sys
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ThreadPoolExecutor
 
-import numpy as np
-from scipy import ndimage as ndi
+import geom_gpu as gg
+import gpu
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from dph import intrinsecos, listar, profundidade
+from pipeline.revo_antigo.dph import intrinsecos, listar, profundidade
 
 
-def mascara_peca(d, salto=2.0, dilat=4, escala=0.1):
+def mascara_peca(d, salto=2.0, dilat=4, escala=0.1, saida_gpu=False):
+    """Mascara bool da peca (maior componente apos separar por salto de profundidade). Toda a imagem na GPU
+    (cupyx.scipy.ndimage); `d` numpy ou cupy; devolve numpy (cupy se saida_gpu)."""
+    xp = gpu.xp()
+    ndi = gg.ndi()
+    d = gpu.para_gpu(d)
     m = d > 0
-    if not m.any():
-        return m
-    z = d.astype(np.float32) * escala
-    g = np.zeros_like(m)
+    if not bool(m.any()):
+        return m if saida_gpu else gpu.para_cpu(m)
+    z = d.astype(xp.float32) * xp.float32(escala)
+    g = xp.zeros_like(m)
     for dy, dx in ((0, 1), (1, 0)):
-        a = np.abs(z - np.roll(z, (dy, dx), (0, 1))) > salto
-        g |= a | np.roll(a, (-dy, -dx), (0, 1))
+        a = xp.abs(z - xp.roll(z, (dy, dx), (0, 1))) > salto
+        g |= a | xp.roll(a, (-dy, -dx), (0, 1))
     mm = m & ~g
-    lab, n = ndi.label(ndi.binary_dilation(mm, iterations=dilat) & m)
-    if n == 0:
-        return m & False
-    sz = ndi.sum(m, lab, range(1, n + 1))
-    return lab == 1 + int(np.argmax(sz))
+    lab, n = ndi.label(gg.dilatar(mm, dilat) & m)
+    if int(n) == 0:
+        r = m & False
+    else:
+        sz = xp.bincount(lab[m & (lab > 0)], minlength=int(n) + 1)[1:]  # pixels da imagem por componente
+        r = lab == 1 + int(sz.argmax())
+    return r if saida_gpu else gpu.para_cpu(r)
 
 
 def limpar_scan(args):
@@ -43,10 +50,11 @@ def limpar_scan(args):
     esc = intrinsecos(pasta)[4]
     for f in listar(pasta):
         d = profundidade(f)
-        s = mascara_peca(d, salto, dilat, esc)
-        tot += int((d > 0).sum())
+        dg = gpu.para_gpu(d)
+        s = mascara_peca(dg, salto, dilat, esc, saida_gpu=True)
+        tot += int((dg > 0).sum())
         mant += int(s.sum())
-        np.where(s, d, 0).astype(np.uint16).tofile(f)
+        gpu.para_cpu(gpu.xp().where(s, dg, 0).astype(gpu.xp().uint16)).tofile(f)
     return os.path.basename(pasta), tot, mant
 
 
@@ -63,7 +71,7 @@ def main():
         sys.exit("destino ja existe: " + a.saida)
     shutil.copytree(a.projeto, a.saida)
     tarefas = [(os.path.join(a.saida, "data", s), a.salto, a.dilat) for s in a.scans]
-    with ProcessPoolExecutor(a.jobs) as ex:
+    with ThreadPoolExecutor(a.jobs) as ex:  # a GPU faz a conta; as threads so sobrepoem leitura e escrita dos .dph
         for s, tot, mant in ex.map(limpar_scan, tarefas):
             print(f"{s}: {mant}/{tot} pixels mantidos ({100 * mant / max(tot, 1):.1f}%)")
 
