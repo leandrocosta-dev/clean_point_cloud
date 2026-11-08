@@ -35,4 +35,4 @@ History uses short Portuguese, component-prefixed subjects, such as `pipeline: .
 
 ## Data Protection & Processing Rules
 
-Never modify original scan projects; write copies to new destinations. Clean Revo frames rather than only exported PLY files. Keep hole filling opt-in. Use low process priority and at most 12 threads, following the pipeline guide. Exclude scan data, generated outputs, caches, logs, and local GUI state from commits.
+Never modify original scan projects; write copies to new destinations. Clean Revo frames rather than only exported PLY files. Keep hole filling opt-in. Use the resource budget in `pipeline/recursos.py` (default since 2026-11-08: high priority and all logical processors; `REVO_RECURSOS=conservador` restores low priority and at most 12 threads). Exclude scan data, generated outputs, caches, logs, and local GUI state from commits.

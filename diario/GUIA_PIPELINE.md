@@ -4,12 +4,29 @@ Objetivo do usuario: a partir dos scans do Revo Scan 6 (`frames.dataset`), entre
 e, quando a peca foi escaneada em varios scans, uma peca COMPLETA, alinhada e limpa (hoje: engenharia reversa no NX).
 Historico detalhado, numeros e erros em `diario/DIARIO.md`; este guia e a receita e a lista do que NAO repetir.
 
+## 00. Comece por aqui (2026-11-08)
+1. `python pipeline/triagem.py <proj> --saida perfil.json`: mede cada scan (placa por AREA, peca escolhida pelo foco das cameras,
+   apoiada x suspensa pela distribuicao de altura, saltos de pose, modos, fuse) e recomenda a receita e as opcoes de limpeza.
+   Acertou P3, P4, P8 e P9; no P5 (arco sobre placa-gabarito elevada) escolhe o gabarito: conferir. `rodar_tudo.py --auto` usa a recomendacao.
+2. Codigo de saida 2 = RESULTADO PARCIAL (limpar_raw com scan erro/pulado/revisar; consenso com scan que perdeu > --perda-max).
+   Nao aprovar sem olhar; `--permitir-parcial` so quando o parcial e intencional.
+3. Metricas padrao: `pipeline/metricas.py` (nuvem/malha/consenso, JSON). Regressao: `pipeline/regressao.py` + `bench/casos.json`.
+4. Suportes/gabaritos identificados: `limpar_raw --exclusoes excl.json` (caixa/esfera/semiespaco/pontos, por guid ou "*");
+   prevalecem sobre a recuperacao pelo fuse.ply e sobre a evidencia temporal.
+5. Scripts descartados ficam em `pipeline/legado/` (LEIA-ME explica cada um).
+6. Lixo entre scans alinhados (fiapos, apoio encostado que muda de lugar): `consenso_visibilidade.py <proj> --poses poses.json --saida NOVA`
+   (poses {guid: 4x4 scan->ref}, ex.: Merge Alignment do Revo). Remove so o que outra camera VIU atravessado (espaco livre) e ninguem
+   confirma; inconclusivo fica (PLYs em `_inspecao_visibilidade/` para olhar com `consulta3d.py`). P9: 093808 10 -> 1,1%, 094322 9,6 -> 0,2%
+   sem confirmacao, sem precisar das fusoes do Revo. Pose com erro > --tol (0,5 mm) gera contradicao falsa: alinhar antes.
+8. Peca pequena com detalhe fino: `fundir_nitido.py ... --motor cuda` (P7: 78 s x 446 s na CPU; GPU x CPU mediana 3,4 um).
+7. Inspecao 3D: `consulta3d.py` (caixa/esfera/corte/componentes/comparar/vista HTML/cobertura_inspecao com registro do que ja foi visto).
+
 ## 0. Regras do usuario (nao quebrar)
 - NAO fechar furos por padrao (2026-11-02): nenhuma etapa fecha furos sozinha (Hole Filling do Revo = `--furos`, MeshLib = `malha_meshlib --furo-max N`, padrao 0). So aplicar se o usuario pedir.
 - Limpar no nivel dos FRAMES (`frames.dataset`), nunca em `.ply`; o Revo refunde dos quadros. Entregar `.revo` completo.
 - Nunca tocar no projeto original (D:\Projects\...): sempre copia em pasta nova (os scripts recusam destino existente).
 - Responder em portugues. Anotar aprendizados no diario do repo sem duplicar. Nao perguntar; checar e testar por conta.
-- Usar a maquina toda, MAS ver secao 8 (instabilidade): prioridade baixa e <= 12 threads.
+- Usar a maquina toda (2026-11-08): prioridade ALTA e todos os processadores/GPU (`recursos.py` modo maximo); a instabilidade da secao 8 e historica.
 - "Nao alucinar": toda afirmacao com medida; dizer o que nao foi verificado.
 - Peca APOIADA em mesa/placa (2026-11-07): eliminar 1-2 mm da peca junto ao plano de apoio, para nao sobrar resquicio da mesa colado (`limpar_por_placa.py --altura-min 1.0`..`2.0`; o padrao 16 e para peca suspensa). Avisar na entrega que essa faixa foi removida de proposito.
 
@@ -18,6 +35,8 @@ Historico detalhado, numeros e erros em `diario/DIARIO.md`; este guia e a receit
 |---|---|
 | `limpar_raw.py` | limpeza por quadro (pega a peca por marcadores/geometria, tira pixels voadores e ilhas). `--sem-ply-antigos` (nao copia fuse/mesh/mark.ply com a mesa), `--periferia-mm 5 --periferia-banda 12 --periferia-alargue 10` (remove mesa; opt-in), `--jobs`. Pula scan com erro de calibracao > 2,5x espacamento (copia intacto) |
 | `revo_ui.py` | automacao do Revo por UI Automation (pywinauto): `RevoUI.abrir/carregar_projeto/abrir_scan/fundir/malha/exportar/fechar`, `parametros()` (grava no `.revox`), `manter_tela_ativa()` |
+| `revo_cli.py` | CLI unica do Revo (status, captura, biblioteca-scans, importar --grupo, grupo, abrir-scan, fundir, fechar). Skill `.claude/skills/revo-scan` resume tudo |
+| `avaliar_merge_revo.py`, `limpar_por_merge_revo.py` | mede um Merge Alignment do usuario (encaixe, confirmacao, lixo por scan) e limpa os quadros a partir dele |
 | `revo_pipeline.py` | importa um `.revo`, grava parametros, funde, gera malha e exporta por scan (`--ponto --malha rapida|alta --grade --furos --marcadores --manter-isolados --reusar --so-exportar`) |
 | `rodar_tudo.py` | cadeia: limpar_raw -> (`--unir A B --lados opostos`) -> revo_pipeline. Para 1 scan ou 1 par |
 | `uniao_scans.py` | une 2 scans (alinhamento por candidatos + `--lados`) ou N scans com poses por segmento (`unir_varios`, `copias`, selecao) |
@@ -25,7 +44,10 @@ Historico detalhado, numeros e erros em `diario/DIARIO.md`; este guia e a receit
 | `alinhar_segmentos.py` | segmentos de N quadros -> centroides de 1 mm -> lacos ICP robusto -> grafo de poses (so como partida; o bom e `alinhar_direto`) |
 | `alinhar_direto.py` | OTIMIZACAO CONJUNTA ponto-a-plano de todos os segmentos (o que realmente alinha); varias etapas com `--tol-ini/--tol-fim` |
 | `avaliar_segmentos.py`, `avaliar_por_scan.py` | vies normal por celula de 30 mm (unica metrica de alinhamento valida) |
-| `limpar_por_consenso.py` | limpeza dos quadros por consenso entre scans ALINHADOS (apoio >= 2 outros scans e <= 15 mm do nucleo) |
+| `limpar_por_consenso.py` | limpeza dos quadros por consenso entre scans ALINHADOS (apoio >= 2 outros scans a `--tol` 1 mm e <= 15 mm do nucleo, ambos EUCLIDIANOS desde 2026-11-08; `--metodo voxel` = regra antiga). Aborta sem gravar se `--nucleo` > scans ou nucleo vazio; codigo 2 se scan perde > `--perda-max` |
+| `alinhar_direto.py` (2026-11-08) | passo LM so aceito se o custo robusto cair; Tukey `auto` = max(0,5; tol/4); RMS ponderado; aviso de segmentos sem ligacao; condicionamento por no; 20% dos pares reservados medem o vies antes/depois e REVERTE se piorar (`--sem-reversao`) |
+| `alinhar_varios.py --escala auto` | grades grossas proporcionais a peca (diagonal/350 mm, 0,15-1): peca de 50 mm usa FPFH ~1 mm em vez de 6 mm |
+| `triagem.py`, `metricas.py`, `recursos.py` | ver secao 00 |
 | `remapear_segmentos.py` | refaz k0/k1 e centroides quando a limpeza apagou quadros |
 | `cobertura.py`, `selecionar_segmentos.py` | ordem gulosa de construcao e conjunto minimo de segmentos que cobre a superficie SOLIDA |
 | `montar_pecas.py` | monta o scan unico (frames dos segmentos escolhidos, pose do segmento) + `.revo`; `--selecao`, `--copias` |
@@ -83,8 +105,12 @@ NAO medido: exatidao absoluta (precisa de referencia CMM/peca padrao), abertura 
 - Para-choque Onix (`D:\Projects\Project20260921_185107`): entrega em `Desktop\Onix_parachoque_traseiro_ENTREGA` (v1.9); falta conferencia visual do usuario. Pastas de trabalho em `Desktop\_onix_*` (podem ser apagadas depois da aprovacao; `_onix_seg_c` tem segmentos/poses `direto4.json`).
 - Segundo projeto pedido pelo usuario: `D:\Projects\Project20260607_154154` (7 scans, 1,5 GB, mesma calibracao do Onix, scan_mode misto, 2 scans sem fusao). Limpeza em `Desktop\_p2_limpo` (limpar_raw, 3 jobs); proximos passos = receita C (alinhar_varios -> segmentos -> direto -> consenso -> Revo -> propria).
 
-## 8. Maquina (i7-13700K, 64 GB, GTX 1650 4 GB sem CUDA no Open3D)
-Instabilidade sob carga sustentada em todos os nucleos: segfaults aleatorios do Open3D (3221225477/139), `cKDTree.query` devolvendo indice impossivel, VS Code/PC caindo; Windows registrou WHEA e "memoria defeituosa". Sempre: `baixa_prioridade()` (BELOW_NORMAL), OMP <= 3-4 threads x 4 processos, tarefas pesadas em processo isolado com repeticao (`isolado()`), validar resultados (`vizinho()`), checkpoints em disco, esperas curtas. Recomendar ao usuario BIOS/microcode Intel e teste de memoria. GPU nao compensa.
+## 8. Maquina (i7-13700K 16C/24T, 64 GB, RTX 3060 12 GB; CuPy/CUDA 12.9 na .venv, Open3D continua CPU)
+ATUAL (2026-11-08, pedido do usuario): prioridade ALTA e maximo de recursos. `pipeline/recursos.py` modo `maximo` e o padrao
+(24 threads, HIGH_PRIORITY_CLASS; limites menores pedidos por scripts sao ignorados); a GUI usa a mesma regra (Ambiente >
+Prioridade, padrao alta). `REVO_RECURSOS=conservador` (ou prioridade "baixa" na GUI) volta a regra antiga abaixo; `REVO_TETO_THREADS=N`
+fixa o teto. O texto a seguir e HISTORICO, anterior ao upgrade da GPU; usar o modo conservador so se as quedas voltarem (anotar o codigo).
+Historico - instabilidade sob carga sustentada em todos os nucleos: segfaults aleatorios do Open3D (3221225477/139), `cKDTree.query` devolvendo indice impossivel, VS Code/PC caindo; Windows registrou WHEA e "memoria defeituosa". Sempre: `baixa_prioridade()` (BELOW_NORMAL), OMP <= 3-4 threads x 4 processos, tarefas pesadas em processo isolado com repeticao (`isolado()`), validar resultados (`vizinho()`), checkpoints em disco, esperas curtas. Recomendar ao usuario BIOS/microcode Intel e teste de memoria. GPU nao compensa.
 
 ## Tiras da MESA que sobrevivem ao consenso (achado de 2026-10-22, usuario viu na malha do Onix)
 - Causa: a mesa onde a peca estava apoiada fica FIXA em relacao a peca nos scans da MESMA pose de repouso; scans consecutivos
@@ -321,3 +347,59 @@ Instabilidade sob carga sustentada em todos os nucleos: segfaults aleatorios do 
 - Usuario conferiu no MeshInspector: "ficou muito bom". Entrega `Desktop\Projeto8_ENTREGA`.
 - Teste do corte junto ao apoio (regra do usuario, 1-2 mm), mesmo Projeto 8 e mesmas poses: `--altura-min 2.0` contra o 1,0 aprovado. A fusao passou de 834.686 para 807.806 pontos. Da nuvem de 1 mm, 7.582 pontos (0,91%, ~43 mm2) nao existem na de 2 mm. Todos estao NA superficie (deslocamento na normal mediana 0,01 mm, so 1% a > 0,5 mm; normal igual a vizinha em 87%). Sao faixas de 1-2 mm de largura nas linhas de contato de cada pose que nenhum outro scan viu, nao mesa. Nao apareceu nada saltando para fora na faixa 1-2 mm. Conclusao neste projeto: 1 mm ja bastou; 2 mm so abriu frestas em superficie real. O corte maior so compensa quando outra pose cobre a faixa de contato ou quando ha mesa visivel colada. Script do teste: `D:\Projects\p8_teste\analise.py`.
 - Artefatos voando na fusao nitida (usuario viu pontinhos soltos nas bordas e entre os dentes no MeshInspector): `pipeline/limpar_artefatos.py nuvem_nitida.ply saida.ply --dist-nucleo 0.25`. Projeto 8: 834.686 -> 827.923 pontos (6.763 removidos, 0,81%), concentrados em volta dos dentes, paredes internas e quinas. ARMADILHA: tirar ponto so por ter poucos vizinhos, em passadas repetidas, come a borda real (cada passada tirava mais uma camada: 4.005, 1.568, 919...; 37% dos removidos estavam no plano da superficie). Regra que ficou: ponto ralo so sai se estiver longe do nucleo denso ou fora do plano dele. Arquivo `Projeto8_ENTREGA\peca_fusao_nitida_v2_sem_artefatos.ply`, aguardando conferencia.
+
+## Projeto 9 (Project20261108_092049, 2026-11-08): peca ~56x43x20 mm em 8 poses sobre placa de marcadores
+- Receita: `limpar_raw --ext-max-mm 100 --so-peca --min-mantido 0.02 --sem-ply-antigos` (aqui quase nao limpou: 3 scans "REVISAR" copiados intactos) -> `limpar_por_placa.py --altura-min 1 --voxel 1 --min-pts-voxel 3 --plano extenso` -> alinhar os scans entre si (FPFH voxel 1,2 + RANSAC + ICP, crescimento + refino contra a uniao) -> consenso: em cada scan, aglomerados (>=150 voxels de 0,5 mm) sem ponto de outro scan a 1 mm sao apagados dos quadros. Entrega `Desktop\Projeto9_ENTREGA`.
+- ARMADILHA 1: peca com face plana grande -> o plano DOMINANTE do RANSAC cai na face da peca, nao na placa (2 de 8 scans). Flag nova `--plano extenso`: 4 planos por RANSAC sequencial e escolhe o de maior AREA ocupada (placa 4.000-17.000 mm2, face da peca ~1.000).
+- ARMADILHA 2: scan sem placa visivel (so a peca; candidatos todos ~800 mm2): qualquer plano corta a peca. Usar so o `limpar_raw` nesse scan.
+- ARMADILHA 3: massinha/apoio enfiado na abertura da peca sobrevive ao corte da placa (fica acima dela e colado na peca). Muda de lugar entre poses -> consenso entre scans remove (33b78bab 45% dos voxels, 97b6a097 22%).
+- ARMADILHA 4: o alinhamento por crescimento pode parar num minimo local quando o scan tem muito lixo (sobreposicao 0,40); 36 partidas RANSAC (voxel 1/1,5/2) acharam 0,50 repetido. Conferir com imagem "outros 7 x este scan (sem apoio em vermelho)".
+- Perda de rastreio no fim de um scan (680250ac): salto de 15,9 mm no encaixe com os 4 quadros anteriores (normal 0,15 mm); quadros depois do salto sem profundidade.
+- Resultado: sem apoio a 1,5 mm 0,0-0,3% por scan (antes ate 37%). Nao aberto no Revo.
+- CORRECAO (usuario fundiu a v1 no Revo: "ainda tem muita poluicao"): fiapos/migalhas/membranas dentro da abertura e copias deslocadas dos dentes passavam no consenso de 1 mm contra nuvens BRUTAS (o ruido de um scan apoia o do outro). O que resolveu: referencia = fusoes do Revo a 0,10 mm (nitidas, ~0,15 mm), alinhadas; ponto da fusao de um scan sem NENHUM outro scan a 0,4 mm e a > 0,3 mm de superficie confirmada (>= 2 scans) = lixo; nos quadros, apagar pixels a <= 0,6 mm do lixo e > 0,5 mm das fusoes dos outros. 33b78bab: 8,1% -> 0,4% sem confirmacao (Merge_08). Repetir a passada com as fusoes/poses do merge seguinte (v3).
+- Alinhamento do Revo (Merge Alignment, poses em `merge_depends[].pose`, 4x4 linha a linha, scan -> merge): mediana 0,05 mm entre scans, melhor que o meu ICP; difere 0,0-0,6 graus / 0,1-0,3 mm.
+- Revo por automacao: grupo novo (`revo_ui.novo_grupo`, `revo_pipeline --grupo`) e o .revox da biblioteca leva o NOME do no (ex. `20261108_094322_COPIA`), nao o guid (corrigido em revo_pipeline). Pendente: ao reiniciar o Revo entre scans ele sai do grupo e a busca abre copia antiga de mesmo nome (a conferencia por pasta recusa).
+- v3 (Merge_10 do usuario, 8 scans, grupo Projeto9_v3, fusoes 0,10 mm): encaixe 0,046-0,056 mm (p90 0,075-0,185), 0% a > 1 mm, sem confirmacao 0,0-0,2%, lixo 0,00-0,08% por scan (v2/Merge_08: lixo ate 0,51%; v1/Merge_07: 33b78bab 8,1%). 775.948 pontos. Entrega: `Projeto9_ENTREGA\Project20261108_092049_limpo_v3`.
+- Merge automatico (`pipeline/revo_merge.py --grupo G`): caixas da lista de merge nao estao na arvore UIA (achadas na imagem: quadrado 17 px borda branca x=48..64); o Revo IGNORA cliques enquanto carrega o modelo anterior (1a rodada marcou so 2 de 8 -> Merge_09 com 2 scans): esperar a caixa ficar numerada antes da proxima. "Exit Merge Alignment" pelo botao UIA nao saiu da tela. Um merge pode conter outro merge (`merge_depends` aponta para Merge_XX.revox): `avaliar_merge_revo` expande recursivamente compondo as poses.
+
+## Limpeza por componente com decisao em JSON (`pipeline/componentes.py`, 2026-11-08)
+- Fluxo: `segmentar` (regras fixas por quadro: distancia 100-600 mm, pixel rasante > 80 graus, mesa por RANSAC com --mesa; componentes conexos no scan, voxel 0,75 mm) -> tabela `componentes.json` + render com ids -> decisao em `decisoes.json` (keep/delete/confianca/motivo/remover_quadros) -> `aplicar` (apaga pixels dos quadros, mede) -> `verificacao.json` + fila `revisao.json`/`revisao.png` -> correcao -> `aplicar` de novo.
+- Teste no Projeto 9 (p9_limpo1): 33b78bab = peca 99,6% + 4 placas finas a 1-2 mm da mesa apagadas; removido 34,8%; sobreposicao entre quadros 0,999; 0 quadros p/ revisao. 680250ac: a fila pegou EXATAMENTE os quadros 164/165 (salto de rastreio achado antes a mao) depois de medir a sobreposicao separadamente contra os 5 quadros anteriores e os 5 seguintes (contra os dois lados juntos dava 1,0: o trecho perdido encaixa em si mesmo). Com `remover_quadros: [[165,175]]` a fila esvaziou.
+- LIMITE: lixo ENCOSTADO na peca (massinha, copia deslocada que cruza a peca, fiapos dos dentes) fica no MESMO componente da peca. Erosao para separar pescoco nao funciona (nuvem = casca de 1-2 voxels; testado e retirado). Para isso: consenso entre scans (`avaliar_merge_revo` + `limpar_por_merge_revo`). Componentes servem para lixo SOLTO (placa, marcadores, objetos separados).
+- VEREDITO DO USUARIO (2026-11-08): abriu os 2 scans limpos por `componentes.py` (Projeto9_componentes) no Revo: "FICOU PESSIMO, NAO LIMPOU NADA". Esperado pelo limite acima: so placa/marcadores/rasantes sairam; massinha, copia deslocada e fiapos colados ficaram. NAO usar `componentes.py` como limpeza principal; serve no maximo como etapa de lixo solto antes do consenso. A limpeza que o usuario aceitou como base foi a v3 (consenso contra fusoes do Revo, Merge_10: lixo <= 0,08% por scan).
+
+## Requisito do usuario: elementos de posicionamento (2026-11-08)
+- Entregar somente a peca alvo. Suportes, gabaritos, fixadores e elementos usados para manter a peca posicionada devem ser totalmente descartados dos frames, mesmo quando aparecem em varios quadros/scans.
+- Apoio multivista confirma observacao, nao pertencimento a peca. Exclusoes identificadas de suporte devem prevalecer sobre recuperacao pelo fuse e consenso. Nao usar corte universal de altura que sacrifique detalhes da peca.
+- Superficie escondida pelo suporte: recuperar de outra posicao quando medida; caso contrario registrar ausencia de dado, sem inventar superficie ou fechar furos automaticamente. Analise em diario/ANALISE_PRECISAO_2026-11-08.md.
+
+
+## Requisito do usuario: inspecao 3D (2026-11-08)
+- A limpeza deve consultar a geometria 3D real, nao depender somente de imagens 2D. Expor consultas espaciais, cortes, isolamento de scans/componentes e comparacao de mantidos/removidos com origem por scan/quadro/pixel.
+- Regioes internas ou ocultas na vista atual devem ser acessiveis por corte e consulta geometrica. Registrar cobertura da inspecao e ambiguidades. Nao confundir superficie escondida na vista com superficie nunca medida.
+- Visualizacao reduzida serve para navegacao; decisao e auditoria devem acessar a resolucao original. Interface consultavel pela LLM ainda e proposta, conforme auditoria de 2026-11-08.
+
+
+## Requisito do usuario: revisar fusao antes do Merge Alignment (2026-11-08)
+- Cada scan: limpar frames -> fundir -> inspecionar em 3D -> identificar residuos -> corrigir frames em nova copia -> refundir -> reinspecionar. Liberar para merge somente sem pendencias identificadas de sujeira/suporte e com preservacao dos detalhes conferida.
+- Incluir residuos flutuantes e encostados na peca; componentes conexos nao bastam. Nao confundir abas reais com artefatos.
+- Correcoes dos frames invalidam fusao/malha/merge dependentes; reconstruir e reavaliar. Residuos descobertos depois do merge retornam ao scan responsavel. Preservar originais e versoes, registrar mascaras e referenciais.
+- Limite de iteracoes ou ambiguidade exige estado de revisao pendente, nunca aprovacao automatica. Ciclo automatizado ainda proposto na auditoria de 2026-11-08.
+
+
+## Hardware atual e proposta de fusao nativa (2026-11-08)
+- Verificado com nvidia-smi: RTX 3060, 12288 MiB VRAM, driver 621.14; substitui a descricao historica da GTX 1650 para a sessao atual. CPU i7-13700K, 16 nucleos/24 logicos. Open3D 0.20.0 instalado retorna CUDA=False.
+- Avaliar fusao nativa individual por scan, com blocos esparsos, camadas de superficie separadas, calibracao por modo e rastreabilidade. Bases existentes: fundir_proprio, fundir_nitido e TSDF antigo; nao sao substitutos universais validados.
+- CPU/GPU devem ser comparadas ao Revo nos mesmos dados, incluindo detalhes, cobertura, residuos, tempo e memoria. (Substituido em 2026-11-08: modo maximo, ver secao 8.) Nao ha benchmark GPU nesta rodada. Projeto tecnico na auditoria de 2026-11-08.
+
+
+## CUDA e benchmark executado (2026-11-08, atualizacao)
+- CuPy 14.2.0 + componentes CUDA 12.9 instalados e validados na RTX 3060 por NVRTC e cuBLAS. Open3D instalado continua CPU. Verificar: python pipeline/verificar_cuda.py; reinstalar dependencias opcionais: pip install -r requirements-cuda.txt.
+- comparar_fusao_cuda.py compara baseline por voxel CPU/GPU e referencia Revo sem alterar entrada. Benchmark inicial completo em diario/BENCHMARK_CUDA_2026-11-08.md. NAO e motor de producao nem prova de ganho contra o Revo; referencia Revo usada e historica.
+
+
+## Corte de apoio de 0,5 a 1 mm (2026-11-08, esclarecimento do usuario)
+- Usuario aceita retirar uma faixa de 0,5-1,0 mm junto a mesa para eliminar residuos encostados; recuperar a superficie medida em outra posicao. Aplicar por plano de apoio de CADA scan, antes da uniao; nao cortar por um eixo global do conjunto.
+- Estimar o plano nos dados originais, pois a base ja limpa pode nao conter a mesa. Conferir identidade do plano e cobertura das outras vistas DEPOIS dos respectivos cortes; ausencia de ponto nao confirma mesa e repeticao de apoio nao confirma pertencimento a peca.
+- Novo avaliar_corte_apoio.py mede os candidatos sem editar frames. Avaliacao real dos tres scans e limites em diario/CORTE_APOIO_2026-11-08.md. Nenhum corte desta rodada aplicado ainda.
+
