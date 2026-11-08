@@ -11,7 +11,9 @@ fusao mostra a peca duplicada). O script:
   3. remove a profundidade dos quadros entre os dois (os de pose perdida), como o Revo faz com quadros sem profundidade;
   4. confere: os quadros corrigidos tem que encaixar nos anteriores.
 Copia o projeto inteiro para --saida (recusa destino existente); so o frames.dataset do scan muda.
+Nuvens, normais e ICP rodam na GPU (gpu.py); a CPU so le/grava o SQLite.
 """
+
 import argparse
 import os
 import shutil
@@ -19,39 +21,48 @@ import sqlite3
 import sys
 import tempfile
 
+import gpu  # noqa: E402
 import numpy as np
-import open3d as o3d
-from scipy.spatial import cKDTree
+from revo_projeto import ArvoreGPU, RevoScan, _qualidade_registro  # noqa: E402
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "revo_frames"))
-from revo_projeto import RevoScan  # noqa: E402
+
+class Resultado:
+    """Fitness e RMSE do ultimo ICP (mesmos campos do RegistrationResult do Open3D)."""
+
+    def __init__(self, fitness, inlier_rmse):
+        self.fitness, self.inlier_rmse = fitness, inlier_rmse
 
 
 def nuvem(scan, K, ks, passo=8):
-    X = np.vstack([scan.pontos(k, K, passo=passo)[0] for k in ks if scan.tem_prof[k]])
-    p = o3d.geometry.PointCloud()
-    p.points = o3d.utility.Vector3dVector(X)
-    p = p.voxel_down_sample(1.0)
-    p.estimate_normals(o3d.geometry.KDTreeSearchParamHybrid(radius=4, max_nn=30))
-    return p
+    """Nuvem de registro na GPU: centroides por voxel de 1 mm (grade como a do Open3D) e normais PCA dos 30 vizinhos
+    mais proximos (o `estimate_normals` hibrido, raio 4 mm e max_nn 30, acaba usando os 30 mais proximos)."""
+    m = gpu.xp()
+    X = m.vstack([scan.pontos(k, K, passo=passo, na_gpu=True)[0] for k in ks if scan.tem_prof[k]])
+    C, _ = gpu.reduzir_voxel(X, 1.0, origem=X.min(0) - 0.5)
+    N = gpu.normais_pca(C, k=30)
+    bom = m.isfinite(N).all(axis=1)
+    return C[bom], N[bom]
 
 
 def estimar(scan, K, a, b, janela):
-    """Transformacao que leva a nuvem dos quadros b..b+janela para o referencial da nuvem a-janela..a."""
-    A = nuvem(scan, K, range(max(0, a - janela), a + 1))
-    D = nuvem(scan, K, range(b, min(len(scan.ids), b + janela + 1)))
+    """Transformacao que leva a nuvem dos quadros b..b+janela para o referencial da nuvem a-janela..a.
+    ICP ponto-plano na GPU (limiares 10, 6, 4 e 2 mm, ate 100 iteracoes cada)."""
+    A, NA = nuvem(scan, K, range(max(0, a - janela), a + 1))
+    D, _ = nuvem(scan, K, range(b, min(len(scan.ids), b + janela + 1)))
     T = np.eye(4)
-    est = o3d.pipelines.registration.TransformationEstimationPointToPlane()
     for thr in (10, 6, 4, 2):
-        r = o3d.pipelines.registration.registration_icp(
-            D, A, thr, T, est, o3d.pipelines.registration.ICPConvergenceCriteria(max_iteration=100))
-        T = np.array(r.transformation)
-    return T, r
+        T, _ = gpu.icp_ponto_plano(D, A, NA, T0=T, dist_max=thr, iteracoes=100, perda="l2")
+    fit, rmse = _qualidade_registro(D, A, T, 2)
+    return T, Resultado(fit, rmse)
 
 
 def encaixe(scan, K, ks, ref):
-    arv = cKDTree(np.vstack([scan.pontos(k, K, passo=20)[0] for k in ref]))
-    return {k: float(np.mean(arv.query(scan.pontos(k, K, passo=20)[0])[0] < 3.0)) for k in ks}
+    m = gpu.xp()
+    arv = ArvoreGPU(m.vstack([scan.pontos(k, K, passo=20, na_gpu=True)[0] for k in ref]))
+    return {
+        k: float(m.isfinite(arv.query(scan.pontos(k, K, passo=20, na_gpu=True)[0], distance_upper_bound=3.0)[0]).mean())
+        for k in ks
+    }
 
 
 def main():
@@ -73,14 +84,18 @@ def main():
     print(f"K {np.round(K, 1)} (erro vs preview {err:.2f} mm)")
     T, r = estimar(scan, K, a_, b_, a.janela)
     ang = np.degrees(np.arccos(np.clip((np.trace(T[:3, :3]) - 1) / 2, -1, 1)))
-    print(f"ICP: fitness {r.fitness:.2f}, rmse {r.inlier_rmse:.2f} mm | translacao {np.linalg.norm(T[:3, 3]):.1f} mm "
-          f"{np.round(T[:3, 3], 1)} | giro {ang:.2f} graus")
+    print(
+        f"ICP: fitness {r.fitness:.2f}, rmse {r.inlier_rmse:.2f} mm | translacao {np.linalg.norm(T[:3, 3]):.1f} mm "
+        f"{np.round(T[:3, 3], 1)} | giro {ang:.2f} graus"
+    )
     if r.fitness < 0.6:
         sys.exit("fitness baixo: o ICP nao convergiu para um encaixe confiavel; nada gravado")
 
     ant = encaixe(scan, K, range(b_, b_ + 10), range(a_ - 22, a_ + 1))
-    print("antes: encaixe <3mm dos quadros %d-%d com os %d-%d: %.0f%%" %
-          (b_, b_ + 9, a_ - 22, a_, 100 * np.mean(list(ant.values()))))
+    print(
+        "antes: encaixe <3mm dos quadros %d-%d com os %d-%d: %.0f%%"
+        % (b_, b_ + 9, a_ - 22, a_, 100 * np.mean(list(ant.values())))
+    )
 
     shutil.copytree(a.projeto, a.saida)
     db = scan.db + ".novo"
@@ -91,7 +106,9 @@ def main():
         if k >= b_:
             nova = T @ scan.T[k]
             bin_ = cn.execute("select bin from FrameInfo where id=?", (i,)).fetchone()[0]
-            cn.execute("update FrameInfo set bin=? where id=?", (bin_[:16] + nova.astype("<f8").tobytes() + bin_[144:], i))
+            cn.execute(
+                "update FrameInfo set bin=? where id=?", (bin_[:16] + nova.astype("<f8").tobytes() + bin_[144:], i)
+            )
         if a_ < k < b_:
             cn.execute("delete from FrameRGBD where id=?", (i,))
     cn.commit()
@@ -104,17 +121,23 @@ def main():
     with open(db, "r+b") as f:
         f.write(scan.sig)
     shutil.move(db, os.path.join(a.saida, "data", a.scan, "cache", "frames.dataset"))
-    print(f"gravado (integridade {integ}); quadros {a_ + 1}-{b_ - 1} sem profundidade, quadros >= {b_} com pose corrigida")
+    print(
+        f"gravado (integridade {integ}); quadros {a_ + 1}-{b_ - 1} sem profundidade, quadros >= {b_} com pose corrigida"
+    )
 
     # conferencia lendo o arquivo gravado
     os.makedirs(os.path.join(work, "conf"), exist_ok=True)
     novo = RevoScan(os.path.join(a.saida, "data", a.scan), os.path.join(work, "conf"))
     dep = encaixe(novo, K, range(b_, b_ + 10), range(a_ - 22, a_ + 1))
-    print("depois: encaixe <3mm dos quadros %d-%d com os %d-%d: %.0f%%" %
-          (b_, b_ + 9, a_ - 22, a_, 100 * np.mean(list(dep.values()))))
+    print(
+        "depois: encaixe <3mm dos quadros %d-%d com os %d-%d: %.0f%%"
+        % (b_, b_ + 9, a_ - 22, a_, 100 * np.mean(list(dep.values())))
+    )
     passo = np.linalg.norm(novo.T[b_, :3, 3] - novo.T[a_, :3, 3])
-    print(f"distancia entre as poses {a_} e {b_}: {np.linalg.norm(scan.T[b_, :3, 3] - scan.T[a_, :3, 3]):.1f} mm -> {passo:.1f} mm "
-          f"(passo normal ~10,7 mm por quadro, {b_ - a_} passos)")
+    print(
+        f"distancia entre as poses {a_} e {b_}: {np.linalg.norm(scan.T[b_, :3, 3] - scan.T[a_, :3, 3]):.1f} mm -> {passo:.1f} mm "
+        f"(passo normal ~10,7 mm por quadro, {b_ - a_} passos)"
+    )
 
 
 if __name__ == "__main__":

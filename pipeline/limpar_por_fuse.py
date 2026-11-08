@@ -8,6 +8,7 @@ do fuse.ply e apagado dos quadros do projeto limpo. Quadros que ficam com < --mi
 perdem a profundidade (como em limpar_por_placa). O original e o limpo nao sao tocados.
 O fuse.ply e a referencia: se ele nao tiver a peca inteira, esta passada corta superficie real.
 """
+
 import argparse
 import json
 import os
@@ -17,19 +18,11 @@ import sys
 import tempfile
 
 import numpy as np
-from scipy.spatial import cKDTree
+from recursos import baixa_prioridade
 
 AQUI = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.join(AQUI, "revo_frames"))
-from revo_projeto import RevoScan, ler_ply, gravar_revo
-
-
-def baixa_prioridade():
-    try:
-        import psutil
-        psutil.Process().nice(psutil.BELOW_NORMAL_PRIORITY_CLASS)
-    except Exception:
-        pass
+import gpu
+from revo_projeto import ArvoreGPU, RevoScan, gravar_revo, ler_ply
 
 
 def processar(orig, limpo, saida, s, tol, min_pix):
@@ -50,8 +43,9 @@ def processar(orig, limpo, saida, s, tol, min_pix):
         sl = RevoScan(pasta_l, os.path.join(tmp, "l"))
         sl.K = K
         _, F = ler_ply(fuse)
-        arv = cKDTree(F[:, :3].astype(float))
+        arv = ArvoreGPU(F[:, :3].astype(float))  # indice na GPU (construido uma vez; uma grade por limite)
         import sqlite3
+
         db = sl.db + ".novo"
         sl.c.execute("pragma wal_checkpoint(TRUNCATE)")
         shutil.copy(sl.db, db)
@@ -61,9 +55,8 @@ def processar(orig, limpo, saida, s, tol, min_pix):
             if not sl.tem_prof[k]:
                 continue
             w, h, mask, z, quatro = sl.profundidade(i)
-            P, pix = sl.pontos(k)
-            d = arv.query(P, distance_upper_bound=tol, workers=4)[0]
-            ok = np.isfinite(d)
+            P, pix = sl.pontos(k, na_gpu=True)
+            ok = gpu.para_cpu(arv.query(P, distance_upper_bound=tol)[0] < np.inf)  # vizinho a menos de tol mm
             antes += len(pix)
             if ok.sum() < min_pix:
                 cn.execute("delete from FrameRGBD where id=?", (i,))
@@ -71,9 +64,12 @@ def processar(orig, limpo, saida, s, tol, min_pix):
                 continue
             nova = np.zeros(w * h, bool)
             nova[pix[ok]] = True
-            dados = (struct.pack("<III", w, h, int(ok.sum()))
-                     + np.packbits(nova, bitorder="little").tobytes() + quatro
-                     + z[ok].astype("<f4").tobytes())
+            dados = (
+                struct.pack("<III", w, h, int(ok.sum()))
+                + np.packbits(nova, bitorder="little").tobytes()
+                + quatro
+                + z[ok].astype("<f4").tobytes()
+            )
             cn.execute("update FrameRGBD set data=? where id=?", (dados, i))
             depois += int(ok.sum())
         cn.commit()
@@ -86,8 +82,10 @@ def processar(orig, limpo, saida, s, tol, min_pix):
         shutil.copytree(pasta_l, dest, ignore=shutil.ignore_patterns("cache"))
         os.makedirs(os.path.join(dest, "cache"))
         shutil.copyfile(db, os.path.join(dest, "cache", "frames.dataset"))
-    return (f"{s}: {antes:,} -> {depois:,} pontos ({depois / max(1, antes) * 100:.1f}% mantidos) | "
-            f"{vazios} quadros sem peca (profundidade removida) | integridade {integ}")
+    return (
+        f"{s}: {antes:,} -> {depois:,} pontos ({depois / max(1, antes) * 100:.1f}% mantidos) | "
+        f"{vazios} quadros sem peca (profundidade removida) | integridade {integ}"
+    )
 
 
 def main():
