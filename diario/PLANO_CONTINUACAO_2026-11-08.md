@@ -2,6 +2,18 @@
 
 Documento de retomada para outra sessão ou outro modelo. Leia primeiro `AGENTS.md` e as seções 00, 0, 3 e 8 de `diario/GUIA_PIPELINE.md`.
 
+## Checkpoint mais recente — 2026-11-08
+
+- Implementadas medições/seletor/aplicador de qualidade regional em `pipeline/medicoes_qualidade_3d.py`, `pipeline/selecao_qualidade.py` e `pipeline/limpar_qualidade_3d.py`, integrados à ação `qualidade` do ciclo. Esta etapa trabalha em cópia dos frames, grava sidecars no diretório pai e não aprova automaticamente.
+- Seleção conservadora: remove somente regiões redundantes com substituto melhor, cobertura geométrica/normais compatíveis e evidência temporal. Detalhe, região única, aresta ambígua ou desvio sem referência segura permanecem; pendências bloqueiam aprovação e exportação para Merge Alignment.
+- Ensaio real reduzido: 3 scans, 96 quadros, 2.061.642 pixels de entrada; 199 observações removidas, 15,023 s, 6 pendências. Isso valida execução parcial e bloqueio, não a correção global do algoritmo nem todos os formatos/projetos. Resultado precisa ser inspecionado e as 6 pendências resolvidas.
+- `pipeline/ciclo_precisao.py` fez 3 fusões reais no Revo a 0,1 mm, todas com código de saída 0. Esse resultado valida o caminho dessas execuções, não equivalência geométrica universal nem liberação de projeto com pendências.
+- Benchmarks P8: limpeza de quadros 128,250 s CPU / 40,283 s GPU (3,18x); métricas 5,421 s / 1,764 s (3,07x), sob as mesmas entradas/opções. Uma rodada por etapa; não são estatística de desempenho para outros scans. Detalhes em `diario/BENCHMARK_GPU_2026-11-08.md`.
+- Validação final integrada: **254 testes aprovados em 40,575 s, sem skips**; regressão **4/4 casos**, com P7 executado em 16,7 s; GUI com 8 testes, catálogo/forms da CLI de qualidade conferidos; Ruff em 159 arquivos e três hooks pre-commit passaram. Hook Git instalado. Hashes dos 57 originais P7 permaneceram iguais. Os 227 testes/88,822 s eram o checkpoint anterior e foram substituídos por esta rodada final.
+- Pendências atuais: triagem P5 continua selecionando o gabarito elevado; projeto grande Onix com 20 scans não foi validado; o ensaio real de qualidade é reduzido e suas seis pendências precisam ser revisadas. A suíte e os checks finais passaram, mas isso não equivale a homologação universal nem aprova automaticamente aquele ciclo.
+
+As seções 2–8 abaixo preservam o plano/estado do checkpoint anterior; use esta seção como status atual e não apague o histórico.
+
 ## 1. Objetivo do usuário
 1. O sistema deve ser rápido, preciso e funcionar em qualquer projeto de scan (Revo Scan 6, formato antigo `.dph`, Creality).
 2. **Todo o cálculo numérico roda na GPU** (RTX 3060 12 GB, CuPy 14.2 + CUDA 12.9 na `.venv`). A CPU fica só com:

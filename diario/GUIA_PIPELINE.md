@@ -1,4 +1,4 @@
-# GUIA DO PIPELINE - leia isto PRIMEIRO (atualizado em 2026-10-22, tag v1.9+)
+# GUIA DO PIPELINE - leia isto PRIMEIRO (atualizado em 2026-11-08)
 
 Objetivo do usuario: a partir dos scans do Revo Scan 6 (`frames.dataset`), entregar um projeto `.revo` com cada frame limpo
 e, quando a peca foi escaneada em varios scans, uma peca COMPLETA, alinhada e limpa (hoje: engenharia reversa no NX).
@@ -18,9 +18,12 @@ Historico detalhado, numeros e erros em `diario/DIARIO.md`; este guia e a receit
    (poses {guid: 4x4 scan->ref}, ex.: Merge Alignment do Revo). Remove so o que outra camera VIU atravessado (espaco livre) e ninguem
    confirma; inconclusivo fica (PLYs em `_inspecao_visibilidade/` para olhar com `consulta3d.py`). P9: 093808 10 -> 1,1%, 094322 9,6 -> 0,2%
    sem confirmacao, sem precisar das fusoes do Revo. Pose com erro > --tol (0,5 mm) gera contradicao falsa: alinhar antes.
-8. Peca pequena com detalhe fino: `fundir_nitido.py ... --motor cuda` (P7: 78 s x 446 s na CPU; GPU x CPU mediana 3,4 um).
 7. Inspecao 3D: `consulta3d.py` (caixa/esfera/corte/componentes/comparar/vista HTML/cobertura_inspecao com registro do que ja foi visto).
 9. GPU obrigatoria: `pipeline/gpu.py` (`xp()`, `knn`, `vizinho_mais_proximo`, `contar_no_raio`, `normais_pca`, `remover_soltos`, `reduzir_voxel`/`agrupar`/`chaves_voxel`, `ransac_plano`, `icp_ponto_plano`, `componentes_conexos_voxel`, `blocos`; entrada numpy ou cupy, saida no mesmo lado; sem CUDA levanta `ErroGPU`). `REVO_PERMITIR_CPU=1` so para depuracao/referencia na CPU. Utilitarios comuns em `pipeline/comum.py` (`sha256`, `ler_ply`/`gravar_ply`, `salvar_json_atomico`, `configurar_log`, `destino_novo`). Uma vez por maquina/venv: `.\.venv\Scripts\python.exe -m pip install -e .` (poe `pipeline/` e `pipeline/revo_frames/` no `sys.path`: `import gpu`, `import revo_projeto` de qualquer pasta; `python pipeline/x.py` continua igual).
+7. Inspecao 3D: `consulta3d.py` (caixa/esfera/corte/componentes/comparar/vista HTML/cobertura_inspecao com registro do que ja foi visto).
+8. Peca pequena com detalhe fino: `fundir_nitido.py ... --motor cuda` (P7: 78 s x 446 s na CPU; GPU x CPU mediana 3,4 um).
+9. GPU obrigatoria: `pipeline/gpu.py` (`xp()`, `knn`, `vizinho_mais_proximo`, `contar_no_raio`, `normais_pca`, `remover_soltos`, `reduzir_voxel`/`agrupar`/`chaves_voxel`, `ransac_plano`, `icp_ponto_plano`, `componentes_conexos_voxel`, `blocos`; entrada numpy ou cupy, saida no mesmo lado; sem CUDA levanta `ErroGPU`). `REVO_PERMITIR_CPU=1` so para depuracao/referencia na CPU. Utilitarios comuns em `pipeline/comum.py` (`sha256`, `ler_ply`/`gravar_ply`, `salvar_json_atomico`, `configurar_log`, `destino_novo`). Uma vez por maquina/venv: `.\.venv\Scripts\python.exe -m pip install -e .` (poe `pipeline/` e `pipeline/revo_frames/` no `sys.path`: `import gpu`, `import revo_projeto` de qualquer pasta; `python pipeline/x.py` continua igual).
+10. Qualidade por regiao 3D, somente depois de poses validadas: `ciclo_precisao.py qualidade CICLO --poses poses.json`. A selecao e conservadora: so remove uma regiao redundante com substituto melhor e confirmado em outra vista; regiao unica, detalhe/normal ambiguos e superficie sem cobertura permanecem. Deformacao suspeita sem substituto vira pendencia e bloqueia aprovacao/merge.
 
 ## 0. Regras do usuario (nao quebrar)
 - NAO fechar furos por padrao (2026-11-02): nenhuma etapa fecha furos sozinha (Hole Filling do Revo = `--furos`, MeshLib = `malha_meshlib --furo-max N`, padrao 0). So aplicar se o usuario pedir.
@@ -56,6 +59,7 @@ Historico detalhado, numeros e erros em `diario/DIARIO.md`; este guia e a receit
 | `fundir_proprio.py` -> `refinar_nuvem.py` -> `uniao_revo_propria.py` -> `malha_poisson.py` | fusao propria completa, suavizacao, uniao com a nuvem do Revo (cinza/laranja), malha de Poisson |
 | `confianca.py` | mapa de confianca: em quantos scans independentes cada ponto se apoia |
 | `limpar_fragmentos.py` | tira componentes isoladas pequenas (chapa solta a 82 mm) da nuvem e das malhas; `lacunas.py` = relatorio/imagem dos contornos abertos da malha |
+| `medicoes_qualidade_3d.py`, `selecao_qualidade.py`, `limpar_qualidade_3d.py` | mede qualidade por regiao 3D, compara scans alinhados por evidencias temporais/normais e aplica mascara conservadora nos frames de uma copia nova |
 
 Pre-requisitos: `.venv` do projeto (open3d 0.20 CPU, numpy, scipy, pywinauto, pillow, psutil, matplotlib). Scripts com
 ProcessPool exigem `if __name__ == "__main__"`. Revo: `C:\Program Files\Revo Scan 6\RevoScan6.exe` 6.4.1.
@@ -385,7 +389,16 @@ Historico - instabilidade sob carga sustentada em todos os nucleos: segfaults al
 - Cada scan: limpar frames -> fundir -> inspecionar em 3D -> identificar residuos -> corrigir frames em nova copia -> refundir -> reinspecionar. Liberar para merge somente sem pendencias identificadas de sujeira/suporte e com preservacao dos detalhes conferida.
 - Incluir residuos flutuantes e encostados na peca; componentes conexos nao bastam. Nao confundir abas reais com artefatos.
 - Correcoes dos frames invalidam fusao/malha/merge dependentes; reconstruir e reavaliar. Residuos descobertos depois do merge retornam ao scan responsavel. Preservar originais e versoes, registrar mascaras e referenciais.
-- Limite de iteracoes ou ambiguidade exige estado de revisao pendente, nunca aprovacao automatica. Ciclo automatizado ainda proposto na auditoria de 2026-11-08.
+- Limite de iteracoes ou ambiguidade exige estado de revisao pendente, nunca aprovacao automatica. A etapa regional de qualidade 3D foi integrada ao ciclo; veja a secao abaixo. A revisao iterativa completa ainda depende de inspeção e parecer humano.
+
+## Qualidade 3D por regiao e bloqueio de aprovacao (2026-11-08)
+- Etapa de ciclo: `python pipeline/ciclo_precisao.py qualidade <ciclo> --poses poses.json`. As poses precisam cobrir todos os scans ativos e mapear cada GUID para 4x4 scan→referencial comum. Rode depois de alinhar e revisar as poses.
+- Aplicacao direta: `python pipeline/limpar_qualidade_3d.py <projeto> --poses poses.json --saida PASTA_NOVA\projeto`. A pasta especificada recebe a copia dos frames; `qualidade_3d.json` e a pasta `qualidade_3d/` de artefatos ficam ao lado dela. O destino deve ser novo e fora do projeto-fonte.
+- `medicoes_qualidade_3d.py` consulta cada quadro em geometria 3D e preserva GUID/quadro/pixel. Ruido temporal e dispersao espacial ficam separados; detalhe persistente e normal ambigua sao protegidos. A selecao exige referencia melhor, evidencia temporal, cobertura espacial/normais assinadas e revalida os pixels reais antes de escrever.
+- Se não houver substituto seguro, evidência suficiente ou compatibilidade geométrica, manter os pixels e registrar pendência. Resultado sem pendências ainda fica `revisao_aguardando_inspecao`; só parecer humano após inspeção 3D pode liberar. Com pendências, `aprovar` recusa e não se exporta para Merge Alignment.
+- Ensaio real reduzido, 3 scans/96 quadros/2.061.642 pixels: 199 observacoes removidas em 15,023 s, com 6 pendencias. Isso demonstra execucao parcial e bloqueio conservador, nao homologacao geral nem prova de qualidade total.
+- Os sidecars incluem hashes de dataset, preview, calibracao, poses e arquivo de observacoes; alteracao desses dados invalida a mascara.
+- Validação integrada do repositório em 2026-11-08: 254 testes sem skips, regressão 4/4 (inclui P7), Ruff em 159 arquivos e três hooks pre-commit aprovados. Hashes dos 57 originais P7 preservados. Isto verifica a suíte e a integridade dos dados testados; as seis pendências do ensaio reduzido ainda exigem revisão e não liberam aquele ciclo.
 
 
 ## Hardware atual e proposta de fusao nativa (2026-11-08)
