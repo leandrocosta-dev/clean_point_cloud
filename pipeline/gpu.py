@@ -23,13 +23,19 @@ trabalham em float32 relativo a origem da grade (precisao ~0,01 um em pecas de a
 
 Execute este arquivo para o benchmark CPU x GPU com 2 M pontos:  python pipeline/gpu.py
 """
+
+from __future__ import annotations
+
 import importlib.util
 import logging
 import math
 import os
-from pathlib import Path
 import sys
 import warnings
+from collections.abc import Iterator
+from pathlib import Path
+from types import ModuleType
+from typing import Any
 
 import numpy as np
 
@@ -76,10 +82,10 @@ def _permitir_cpu():
     return os.environ.get("REVO_PERMITIR_CPU", "").strip() == "1"
 
 
-def xp():
+def xp() -> ModuleType:
     """Modulo de arrays: `cupy` (GPU). Sem CUDA levanta `ErroGPU`, exceto com REVO_PERMITIR_CPU=1 (devolve numpy e avisa).
 
-        xp = gpu.xp(); a = xp.arange(10) ** 2
+    xp = gpu.xp(); a = xp.arange(10) ** 2
     """
     if "xp" in _ESTADO:
         return _ESTADO["xp"]
@@ -89,22 +95,25 @@ def xp():
             import cupy as cp
         if cp.cuda.runtime.getDeviceCount() < 1:
             raise ErroGPU("nenhuma GPU CUDA encontrada")
-        cp.zeros(1, dtype=cp.float32).sum().item()        # forca contexto, driver e NVRTC/cuBLAS carregados
+        cp.zeros(1, dtype=cp.float32).sum().item()  # forca contexto, driver e NVRTC/cuBLAS carregados
         _ESTADO["xp"] = cp
-    except Exception as e:                                  # ImportError, CUDARuntimeError, ErroGPU...
+    except Exception as e:  # ImportError, CUDARuntimeError, ErroGPU...
         if not _permitir_cpu():
             raise ErroGPU(
                 f"GPU CUDA indisponivel ({type(e).__name__}: {e}). O projeto exige GPU; instale requirements-cuda.txt e "
                 f"confira o driver com `python pipeline/verificar_cuda.py`. Para depurar na CPU: REVO_PERMITIR_CPU=1."
             ) from e
-        warnings.warn("REVO_PERMITIR_CPU=1: usando numpy/scipy na CPU (so depuracao; resultados iguais, muito mais lento)",
-                      RuntimeWarning, stacklevel=2)
+        warnings.warn(
+            "REVO_PERMITIR_CPU=1: usando numpy/scipy na CPU (so depuracao; resultados iguais, muito mais lento)",
+            RuntimeWarning,
+            stacklevel=2,
+        )
         log.warning("gpu: fallback para CPU (REVO_PERMITIR_CPU=1)")
         _ESTADO["xp"] = np
     return _ESTADO["xp"]
 
 
-def em_gpu():
+def em_gpu() -> bool:
     """True se `xp()` e cupy (False so no modo de depuracao em CPU)."""
     return xp() is not np
 
@@ -121,22 +130,23 @@ def _devolver(x, gpu):
     return x if gpu or not em_gpu() else para_cpu(x)
 
 
-def para_gpu(a, dtype=None):
+def para_gpu(a: Any, dtype: Any = None) -> Any:
     """numpy/lista/cupy -> array no dispositivo (no modo CPU: numpy). `dtype` opcional."""
     m = xp()
     return m.asarray(a, dtype=dtype) if dtype is not None else m.asarray(a)
 
 
-def para_cpu(a):
+def para_cpu(a: Any) -> np.ndarray:
     """cupy/numpy -> numpy."""
     if _eh_gpu(a):
         import cupy as cp
+
         return cp.asnumpy(a)
     return np.asarray(a)
 
 
 # ---------------------------------------------------------------- memoria
-def memoria_vram():
+def memoria_vram() -> tuple[int, int]:
     """(livre, total) em bytes; o livre inclui blocos que o pool do CuPy guarda e pode reutilizar."""
     if not em_gpu():
         return 4 << 30, 4 << 30
@@ -145,7 +155,7 @@ def memoria_vram():
     return int(livre + cp.get_default_memory_pool().free_bytes()), int(total)
 
 
-def liberar_memoria():
+def liberar_memoria() -> None:
     """Devolve ao driver os blocos ociosos do pool (chamar entre etapas grandes)."""
     if em_gpu():
         cp = xp()
@@ -153,17 +163,17 @@ def liberar_memoria():
         cp.get_default_pinned_memory_pool().free_all_blocks()
 
 
-def tamanho_bloco(bytes_por_item, fracao_vram=0.6):
+def tamanho_bloco(bytes_por_item: Any, fracao_vram: float = 0.6) -> int:
     """Quantos itens cabem em `fracao_vram` da VRAM livre gastando `bytes_por_item` cada (>= 1)."""
     livre, _ = memoria_vram()
     return max(1, int(livre * fracao_vram) // max(1, int(bytes_por_item)))
 
 
-def blocos(n, bytes_por_item, fracao_vram=0.6):
+def blocos(n: int, bytes_por_item: Any, fracao_vram: float = 0.6) -> Iterator[tuple[int, int]]:
     """Gera (a, b) cobrindo range(n) em fatias que cabem na VRAM livre.
 
-        for a, b in gpu.blocos(len(Q), bytes_por_item=k * 40):
-            r = f(Q[a:b]); saida[a:b] = para_cpu(r)
+    for a, b in gpu.blocos(len(Q), bytes_por_item=k * 40):
+        r = f(Q[a:b]); saida[a:b] = para_cpu(r)
     """
     passo = tamanho_bloco(bytes_por_item, fracao_vram)
     for a in range(0, n, passo):
@@ -171,7 +181,7 @@ def blocos(n, bytes_por_item, fracao_vram=0.6):
 
 
 # ---------------------------------------------------------------- agrupamento e voxels
-def agrupar(chaves):
+def agrupar(chaves: Any) -> tuple[Any, Any, Any]:
     """(unicas, inverso, contagens): `unicas` ordenadas; `inverso[i]` = posicao da chave i em `unicas`.
     `chaves` 1-D (int64 de chaves_voxel, por exemplo) ou 2-D (linhas distintas).
 
@@ -182,13 +192,32 @@ def agrupar(chaves):
     k = para_gpu(chaves)
     if k.ndim == 1:
         u, inv, cnt = m.unique(k, return_inverse=True, return_counts=True)
+    elif k.ndim == 2:
+        # CuPy 14.2 unique(axis=0) ordena linhas com comparacoes em Python;
+        # muitas linhas iguais tornam esse caminho quadratico. Ordenar colunas
+        # na GPU e marcar mudancas preserva a ordem lexicografica sem esse laco.
+        n, colunas = k.shape
+        if n == 0:
+            u, inv, cnt = k.copy(), m.empty(0, m.int64), m.empty(0, m.int64)
+        elif colunas == 0:
+            u, inv, cnt = k[:1].copy(), m.zeros(n, m.int64), m.asarray([n], m.int64)
+        else:
+            ordem = m.lexsort(k.T[::-1])
+            ordenadas = k[ordem]
+            inicio = m.ones(n, dtype=bool)
+            inicio[1:] = m.any(ordenadas[1:] != ordenadas[:-1], axis=1)
+            u = ordenadas[inicio]
+            limites = m.concatenate([m.flatnonzero(inicio), m.asarray([n], m.int64)])
+            cnt = m.diff(limites)
+            inv = m.empty(n, m.int64)
+            inv[ordem] = m.cumsum(inicio, dtype=m.int64) - 1
     else:
-        u, inv, cnt = m.unique(k, axis=0, return_inverse=True, return_counts=True)
+        raise ValueError("chaves devem ter uma ou duas dimensoes")
     inv = inv.reshape(-1)
     return _devolver(u, gpu), _devolver(inv, gpu), _devolver(cnt, gpu)
 
 
-def somar_por_grupo(valores, inverso, n_grupos=None):
+def somar_por_grupo(valores: Any, inverso: Any, n_grupos: int | None = None) -> Any:
     """Soma de `valores` ((n,) ou (n, d)) por grupo de `inverso`; devolve (n_grupos,) ou (n_grupos, d) float64.
     Soma em float64 com atomicos: a ordem varia, diferenca ~1e-16 relativa entre execucoes.
 
@@ -210,7 +239,7 @@ _BITS = 21
 _MASC = (1 << _BITS) - 1
 
 
-def chaves_voxel(P, voxel, origem=None):
+def chaves_voxel(P: Any, voxel: float, origem: Any = None) -> Any:
     """Chave int64 do voxel de cada ponto: indice (floor((P - origem)/voxel)) empacotado em 3 x 21 bits.
     `origem` padrao = P.min(0); passe a MESMA origem para obter chaves comparaveis entre nuvens/blocos
     (indices devem ficar em [0, 2^21)). Para voltar ao centro: `decodificar_voxel`.
@@ -228,7 +257,7 @@ def chaves_voxel(P, voxel, origem=None):
     return _devolver(chave, gpu)
 
 
-def decodificar_voxel(chaves, voxel, origem):
+def decodificar_voxel(chaves: Any, voxel: float, origem: Any) -> Any:
     """Centros (m, 3) float64 dos voxels de `chaves` (inverso de chaves_voxel com a mesma origem/voxel)."""
     gpu = _saida_gpu(chaves)
     m = xp()
@@ -238,7 +267,7 @@ def decodificar_voxel(chaves, voxel, origem):
     return _devolver(c, gpu)
 
 
-def reduzir_voxel(P, voxel, pesos=None, min_obs=1, origem=None):
+def reduzir_voxel(P: Any, voxel: float, pesos: Any = None, min_obs: int = 1, origem: Any = None) -> tuple[Any, Any]:
     """Centroide (ponderado por `pesos`) dos pontos de cada voxel; descarta voxels com menos de `min_obs` pontos.
     Devolve (centroides (m, 3) float64, contagens (m,) int64), ordenados pela chave do voxel.
 
@@ -250,7 +279,7 @@ def reduzir_voxel(P, voxel, pesos=None, min_obs=1, origem=None):
     Pg = para_gpu(P, m.float64)
     o = Pg.min(0) if origem is None else para_gpu(origem, m.float64)
     _, inv, cnt = agrupar(chaves_voxel(Pg, voxel, o))
-    rel = Pg - o                                               # soma relativa a origem: menos erro de arredondamento
+    rel = Pg - o  # soma relativa a origem: menos erro de arredondamento
     if pesos is None:
         soma = somar_por_grupo(rel, inv, len(cnt))
         C = soma / cnt[:, None] + o
@@ -279,7 +308,7 @@ class Indice:
         d, j = ind.knn(Q, 8)                 # ate 8 vizinhos dentro do raio, em ordem de distancia
     """
 
-    def __init__(self, pts, raio):
+    def __init__(self, pts: Any, raio: float) -> Any:
         if raio <= 0 or not np.isfinite(raio):
             raise ValueError("raio deve ser finito e > 0")
         self.raio = float(raio)
@@ -288,9 +317,10 @@ class Indice:
             self._g = Grade(para_gpu(pts, xp().float64), raio)
         else:
             from scipy.spatial import cKDTree
+
             self._arv = cKDTree(np.asarray(pts, np.float64))
 
-    def mais_proximo(self, Q):
+    def mais_proximo(self, Q: Any) -> Any:
         gpu = _saida_gpu(Q)
         if em_gpu():
             d, j = self._g.mais_proximo(para_gpu(Q, xp().float64), gpu=True)
@@ -299,14 +329,15 @@ class Indice:
         j = np.where(np.isfinite(d), j, -1).astype(np.int64)
         return d, j
 
-    def contar(self, Q):
+    def contar(self, Q: Any) -> Any:
         gpu = _saida_gpu(Q)
         if em_gpu():
             return _devolver(self._g.contar(para_gpu(Q, xp().float64), gpu=True), gpu)
-        return np.asarray(self._arv.query_ball_point(np.asarray(Q, np.float64), self.raio, return_length=True,
-                                                     workers=-1), np.int64)
+        return np.asarray(
+            self._arv.query_ball_point(np.asarray(Q, np.float64), self.raio, return_length=True, workers=-1), np.int64
+        )
 
-    def knn(self, Q, k):
+    def knn(self, Q: Any, k: int) -> tuple[Any, Any]:
         gpu = _saida_gpu(Q)
         if em_gpu():
             d, j = self._g.knn(para_gpu(Q, xp().float64), k, gpu=True)
@@ -316,7 +347,7 @@ class Indice:
         return d, np.where(np.isfinite(d), j, -1).astype(np.int64)
 
 
-def vizinho_mais_proximo(arvore_pts, consultas, dist_max=np.inf):
+def vizinho_mais_proximo(arvore_pts: Any, consultas: Any, dist_max: Any = np.inf) -> tuple[Any, Any]:
     """(dist, idx): vizinho mais proximo em `arvore_pts` de cada consulta; idx = -1 (dist = inf) se alem de `dist_max`.
     Com `dist_max` finito a busca e a mais rapida (grade com celula = dist_max). idx na ordem original de arvore_pts.
 
@@ -329,10 +360,10 @@ def vizinho_mais_proximo(arvore_pts, consultas, dist_max=np.inf):
     return d[:, 0], j[:, 0]
 
 
-def contar_no_raio(pts, consultas, raio):
+def contar_no_raio(pts: Any, consultas: Any, raio: float | None) -> Any:
     """Numero de pontos de `pts` a <= `raio` de cada consulta (inclui o proprio ponto se a consulta estiver em pts).
 
-        n = gpu.contar_no_raio(P, P, 1.0)        # densidade local
+    n = gpu.contar_no_raio(P, P, 1.0)        # densidade local
     """
     return Indice(pts, raio).contar(consultas)
 
@@ -380,7 +411,7 @@ def _knn_em_blocos(P, Q, k, raio_max=None):
         d, _ = _knn_dobrando(P, amostra, k, r0, diag)
         dk = d[:, k - 1]
         dk = dk[m.isfinite(dk)]
-        r = float(1.3 * m.quantile(dk, 0.9)) if len(dk) else diag   # o resto dobra o raio so para si
+        r = float(1.3 * m.quantile(dk, 0.9)) if len(dk) else diag  # o resto dobra o raio so para si
         r = min(max(r, diag * 1e-6, 1e-9), max(diag, 1e-9))
     g = Grade(P, r)
     for a, b in blocos(nq, bytes_por_item=k * 16 * 3):
@@ -402,7 +433,7 @@ def _knn_iter(P, Q, k):
         yield 0, len(Q), d, j
 
 
-def knn(pts, consultas, k, raio_max=None):
+def knn(pts: Any, consultas: Any, k: int, raio_max: float | None = None) -> tuple[Any, Any]:
     """(dist (n, k) float64, idx (n, k) int64): k vizinhos mais proximos em ordem crescente de distancia. Exato, k <= 64.
     `raio_max` dado: busca so ate ele (celula da grade = raio_max; use ~2x a distancia esperada ao k-esimo) e onde faltam
     vizinhos idx = -1, dist = inf. `raio_max=None`: acha o raio sozinho e devolve sempre os k mais proximos
@@ -417,6 +448,7 @@ def knn(pts, consultas, k, raio_max=None):
     m = xp()
     if not em_gpu():
         from scipy.spatial import cKDTree
+
         kw = {} if raio_max is None else dict(distance_upper_bound=float(raio_max))
         d, j = cKDTree(np.asarray(pts, np.float64)).query(np.asarray(consultas, np.float64), k, workers=-1, **kw)
         d, j = d.reshape(len(consultas), k), j.reshape(len(consultas), k)
@@ -437,7 +469,14 @@ def _autovetores_menor(M):
     return w, v[:, :, 0]
 
 
-def normais_pca(pts, k=None, raio=None, orientar_para=None, consultas=None, com_curvatura=False):
+def normais_pca(
+    pts: Any,
+    k: int | None = None,
+    raio: float | None = None,
+    orientar_para: Any = None,
+    consultas: Any = None,
+    com_curvatura: bool = False,
+) -> Any:
     """Normais (n, 3) float64 unitarias = autovetor de menor autovalor da covariancia da vizinhanca (PCA).
     Vizinhanca: `k` vizinhos mais proximos (exato; padrao k=16) OU todos os pontos a <= `raio`. `consultas` (padrao: pts).
     Orientacao: `orientar_para` (3,) = ponto de vista (a normal aponta para ele); (n, 3) = direcao desejada por ponto.
@@ -473,6 +512,7 @@ def normais_pca(pts, k=None, raio=None, orientar_para=None, consultas=None, com_
                 _preencher_normais(N, curv, a, b, M, s0 >= 3)
         else:
             from scipy.spatial import cKDTree
+
             arv = cKDTree(np.asarray(P))
             listas = arv.query_ball_point(np.asarray(Q), raio, workers=-1)
             for i, lst in enumerate(listas):
@@ -484,7 +524,7 @@ def normais_pca(pts, k=None, raio=None, orientar_para=None, consultas=None, com_
         k = 16 if k is None else int(k)
         for a, b, d, j in _knn_iter(P, Q, k):
             valido = j >= 0
-            Y = P[m.maximum(j, 0)]                              # (b-a, k, 3)
+            Y = P[m.maximum(j, 0)]  # (b-a, k, 3)
             cont = valido.sum(1)
             wv = valido[:, :, None].astype(m.float64)
             med = (Y * wv).sum(1) / m.maximum(cont, 1)[:, None]
@@ -506,7 +546,9 @@ def _preencher_normais(N, curv, a, b, M, ok):
     curv[a:b] = m.where(ok, w[:, 0] / soma, m.nan)
 
 
-def remover_soltos(pts, k=16, desvios=2.0, raio=None, min_vizinhos=None):
+def remover_soltos(
+    pts: Any, k: int = 16, desvios: float = 2.0, raio: float | None = None, min_vizinhos: int | None = None
+) -> Any:
     """Mascara bool (True = manter) dos pontos que NAO sao soltos.
     Estatistico (padrao, como o Open3D): media das distancias aos `k` vizinhos; solto se > media_global + desvios * std.
     Por raio (`raio` e `min_vizinhos`): solto se tem menos de `min_vizinhos` outros pontos a <= raio.
@@ -528,13 +570,15 @@ def remover_soltos(pts, k=16, desvios=2.0, raio=None, min_vizinhos=None):
         return _devolver(m.ones(len(P), dtype=bool), gpu)
     media = m.empty(len(P), m.float64)
     for a, b, d, j in _knn_iter(P, P, k + 1):
-        media[a:b] = d[:, 1:].mean(1)                            # coluna 0 = o proprio ponto
+        media[a:b] = d[:, 1:].mean(1)  # coluna 0 = o proprio ponto
     limite = float(media.mean() + desvios * media.std())
     return _devolver(media <= limite, gpu)
 
 
 # ---------------------------------------------------------------- geometria
-def ransac_plano(P, limiar=1.0, iteracoes=3000, semente=0):
+def ransac_plano(
+    P: Any, limiar: float = 1.0, iteracoes: int = 3000, semente: int = 0
+) -> tuple[np.ndarray, float, float]:
     """Plano dominante por RANSAC com todas as hipoteses avaliadas em paralelo na GPU.
     Mesmo contrato de `revo_projeto.plano_ransac`: (n (3,) float64, d float, fracao float) com n.x + d = 0; n unitaria,
     refinada por PCA nos inliers e orientada para o lado onde ha mais pontos afastados (o lado dos objetos);
@@ -583,7 +627,7 @@ def ransac_plano(P, limiar=1.0, iteracoes=3000, semente=0):
     if float((h > 3 * limiar).mean()) < float((h < -3 * limiar).mean()):
         nr, dr = -nr, -dr
     nr = para_cpu(nr).astype(np.float64)
-    dr = float(dr) - float(nr @ para_cpu(c0))                    # volta para as coordenadas originais
+    dr = float(dr) - float(nr @ para_cpu(c0))  # volta para as coordenadas originais
     return nr, dr, fracao
 
 
@@ -613,7 +657,17 @@ def _pesos_perda(r, perda, c):
     raise ValueError("perda deve ser 'tukey', 'huber' ou 'l2'")
 
 
-def icp_ponto_plano(origem, alvo, normais_alvo, T0=None, dist_max=1.0, iteracoes=30, perda="tukey", c=None, tol=1e-8):
+def icp_ponto_plano(
+    origem: Any,
+    alvo: Any,
+    normais_alvo: Any,
+    T0: Any = None,
+    dist_max: float = 1.0,
+    iteracoes: int = 30,
+    perda: str = "tukey",
+    c: Any = None,
+    tol: float = 1e-08,
+) -> tuple[np.ndarray, dict[str, Any]]:
     """ICP ponto-plano robusto na GPU. Devolve (T (4, 4) float64 numpy, info) com T levando `origem` para `alvo`
     (alvo ~ T @ origem). Cada iteracao: vizinho mais proximo (<= dist_max) de T*origem em `alvo`, residuo
     r = (p - q) . n_q, pesos robustos (`perda` 'tukey' | 'huber' | 'l2' com escala `c`, padrao dist_max / 3) e
@@ -729,12 +783,17 @@ def _deslocamentos(conectividade):
     maximo = {6: 1, 18: 2, 26: 3}.get(conectividade)
     if maximo is None:
         raise ValueError("conectividade deve ser 6, 18 ou 26")
-    out = [(dx, dy, dz) for dx in (-1, 0, 1) for dy in (-1, 0, 1) for dz in (-1, 0, 1)
-           if (dx, dy, dz) > (0, 0, 0) and abs(dx) + abs(dy) + abs(dz) <= maximo]
+    out = [
+        (dx, dy, dz)
+        for dx in (-1, 0, 1)
+        for dy in (-1, 0, 1)
+        for dz in (-1, 0, 1)
+        if (dx, dy, dz) > (0, 0, 0) and abs(dx) + abs(dy) + abs(dz) <= maximo
+    ]
     return np.array(out, np.int32)
 
 
-def componentes_conexos_voxel(P, voxel, conectividade=26):
+def componentes_conexos_voxel(P: Any, voxel: float, conectividade: int = 26) -> tuple[Any, Any]:
     """Componentes conexos da ocupacao de voxels (aresta/face/vertice conforme `conectividade` 6, 18 ou 26).
     Devolve (rotulos (n,) int32 por ponto, tamanhos (c,) int64 pontos por componente); rotulo 0 = o maior componente.
     Rotulagem esparsa na GPU (uniao-busca com atomicCAS), sem grade densa: serve para extensoes grandes.
@@ -759,7 +818,7 @@ def componentes_conexos_voxel(P, voxel, conectividade=26):
         th = 128
         grade = ((nv + th - 1) // th,)
         u64 = u.astype(cp.int64)
-        for _ in range(32):                      # a 1a passada pode perder uniao por corrida; repete ate estabilizar
+        for _ in range(32):  # a 1a passada pode perder uniao por corrida; repete ate estabilizar
             antes = pai.copy()
             mod.get_function("unir")(grade, (th,), (u64, np.int32(nv), offg, np.int32(len(off)), pai))
             mod.get_function("comprimir")(grade, (th,), (pai, np.int32(nv)))
@@ -769,14 +828,21 @@ def componentes_conexos_voxel(P, voxel, conectividade=26):
     else:
         from scipy.sparse import coo_matrix
         from scipy.sparse.csgraph import connected_components
+
         ii, jj = [], []
         for dx, dy, dz in off:
             delta = (int(dx) << (2 * _BITS)) + (int(dy) << _BITS) + int(dz)
             kx = (u >> (2 * _BITS)) & _MASC
             ky = (u >> _BITS) & _MASC
             kz = u & _MASC
-            ok = ((kx + dx) >= 0) & ((ky + dy) >= 0) & ((kz + dz) >= 0) & ((kx + dx) <= _MASC) & \
-                 ((ky + dy) <= _MASC) & ((kz + dz) <= _MASC)
+            ok = (
+                ((kx + dx) >= 0)
+                & ((ky + dy) >= 0)
+                & ((kz + dz) >= 0)
+                & ((kx + dx) <= _MASC)
+                & ((ky + dy) <= _MASC)
+                & ((kz + dz) <= _MASC)
+            )
             alvo = u + delta
             pos = np.searchsorted(u, alvo)
             pos = np.minimum(pos, nv - 1)
@@ -787,7 +853,7 @@ def componentes_conexos_voxel(P, voxel, conectividade=26):
         _, raiz = connected_components(coo_matrix((np.ones(len(ii)), (ii, jj)), shape=(nv, nv)), directed=False)
     _, rinv = m.unique(raiz, return_inverse=True)
     rinv = rinv.reshape(-1)
-    rcont = m.bincount(rinv, weights=cont).astype(m.int64)        # pontos (nao voxels) por componente
+    rcont = m.bincount(rinv, weights=cont).astype(m.int64)  # pontos (nao voxels) por componente
     ordem = m.argsort(-rcont, kind="stable")
     posto = m.empty(len(ordem), dtype=m.int64)
     posto[ordem] = m.arange(len(ordem))
@@ -828,7 +894,7 @@ def _bench():
         print(f"  {nome:<34s} CPU {tc:8.2f} s   GPU {tg:8.2f} s   x{tc / max(tg, 1e-9):6.1f}")
 
     gpu_warm = P[:1000]
-    knn(gpu_warm, gpu_warm, 8, 1.0)                                 # compila kernels antes de medir
+    knn(gpu_warm, gpu_warm, 8, 1.0)  # compila kernels antes de medir
     vizinho_mais_proximo(gpu_warm, gpu_warm, 1.0)
     normais_pca(gpu_warm, k=8)
     componentes_conexos_voxel(gpu_warm, 1.0)
@@ -867,17 +933,18 @@ def _bench():
     linha("reduzir_voxel 0,2 mm", tc, tg)
 
     def ransac_cpu():
-        sys.path.insert(0, str(Path(__file__).resolve().parent / "revo_frames"))
         from revo_projeto import plano_ransac
-        return plano_ransac(P[::4], 0.3, 300)                       # CPU em 1/4 dos pontos e 300 hipoteses (150x menos)
+
+        return plano_ransac(P[::4], 0.3, 300)  # CPU em 1/4 dos pontos e 300 hipoteses (150x menos)
 
     tc, _ = tempo(ransac_cpu)
-    tc *= 4 * 10                                                    # extrapola para 2 M pontos e 3000 hipoteses
+    tc *= 4 * 10  # extrapola para 2 M pontos e 3000 hipoteses
     tg, _ = tempo(ransac_plano, P, 0.3, 3000)
     linha("ransac_plano 3000 hip. (CPU extrap.)", tc, tg)
 
     def comp_cpu():
         from scipy import ndimage
+
         idx = np.floor((P - P.min(0)) / 0.5).astype(np.int64)
         g = np.zeros(idx.max(0) + 1, bool)
         g[idx[:, 0], idx[:, 1], idx[:, 2]] = True

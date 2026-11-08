@@ -11,18 +11,22 @@
 
 Importavel de qualquer pasta depois de `pip install -e .` (ver pyproject.toml).
 """
+
+from __future__ import annotations
+
 import hashlib
 import json
 import logging
 import os
-from pathlib import Path
 import sys
 import tempfile
+from pathlib import Path
+from typing import Any
 
 import numpy as np
 
 
-def sha256(path, bloco=1 << 22):
+def sha256(path: str | os.PathLike[str], bloco: int = 1 << 22) -> str:
     """SHA-256 hexadecimal do arquivo, lido em blocos de 4 MiB."""
     h = hashlib.sha256()
     with open(path, "rb") as f:
@@ -31,7 +35,7 @@ def sha256(path, bloco=1 << 22):
     return h.hexdigest()
 
 
-def ler_ply(path):
+def ler_ply(path: str | os.PathLike[str]) -> tuple[str, np.ndarray]:
     """PLY binario little-endian com propriedades float32 -> (cabecalho str, array (n, nprops) float32).
 
     Mesmo formato de `revo_frames/revo_projeto.py::ler_ply`."""
@@ -46,10 +50,10 @@ def ler_ply(path):
     linhas = h.split("\n")
     n = int([ln for ln in linhas if ln.startswith("element vertex")][0].split()[-1])
     nprop = len([ln for ln in linhas if ln.startswith("property")])
-    return h, np.frombuffer(b[k:k + n * 4 * nprop], "<f4").reshape(n, nprop).copy()
+    return h, np.frombuffer(b[k : k + n * 4 * nprop], "<f4").reshape(n, nprop).copy()
 
 
-def gravar_ply(path, header, arr):
+def gravar_ply(path: str | os.PathLike[str], header: str, arr: Any) -> None:
     """Grava PLY binario float32: `header` (texto de ler_ply) com `element vertex` ajustado a len(arr)."""
     linhas = header.split("\n")
     linhas = [f"element vertex {len(arr)}" if ln.startswith("element vertex") else ln for ln in linhas]
@@ -68,7 +72,7 @@ def _padrao_json(o):
     raise TypeError(f"nao serializavel: {type(o).__name__}")
 
 
-def salvar_json_atomico(path, valor, indent=2):
+def salvar_json_atomico(path: str | os.PathLike[str], valor: Any, indent: int = 2) -> Path:
     """Grava JSON UTF-8 num arquivo temporario da mesma pasta e troca com os.replace (atomico).
 
     Aceita tipos numpy e Path. Cria a pasta se preciso. Devolve o Path gravado."""
@@ -90,7 +94,9 @@ def salvar_json_atomico(path, valor, indent=2):
     return path
 
 
-def configurar_log(nome, arquivo=None, nivel=logging.INFO):
+def configurar_log(
+    nome: str, arquivo: str | os.PathLike[str] | None = None, nivel: int = logging.INFO
+) -> logging.Logger:
     """Logger `nome` com formato `HH:MM:SS nivel mensagem` no stdout e, opcionalmente, em `arquivo` (anexa).
 
     Idempotente: chamar de novo com o mesmo nome nao duplica as saidas."""
@@ -113,7 +119,7 @@ def configurar_log(nome, arquivo=None, nivel=logging.INFO):
     return log
 
 
-def destino_novo(path, criar=True):
+def destino_novo(path: str | os.PathLike[str], criar: bool = True) -> Path:
     """Pasta de saida que nao pode ter conteudo: encerra com `destino ja existe: ...` (SystemExit) se `path` for
     arquivo ou pasta nao vazia. Pasta vazia e reaproveitada. Com criar=True cria a pasta; devolve o Path."""
     path = Path(path)

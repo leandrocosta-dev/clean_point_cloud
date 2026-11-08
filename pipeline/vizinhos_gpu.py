@@ -16,6 +16,7 @@ Diferenca conhecida para o caminho CPU do fundir_nitido: la o cKDTree pega os k 
 (raio efetivo maior). A diferenca e medida no benchmark, nao escondida.
 Execute este arquivo para um autoteste contra a referencia exata em CPU (scipy):  python pipeline/vizinhos_gpu.py
 """
+
 import numpy as np
 
 _FONTE = r"""
@@ -124,8 +125,9 @@ def disponivel():
     """True se CuPy e uma GPU CUDA estao acessiveis."""
     try:
         import cupy as cp
+
         return cp.cuda.runtime.getDeviceCount() > 0
-    except Exception:
+    except Exception:  # Isola falhas de backend/automacao ou de um item do lote.
         return False
 
 
@@ -133,6 +135,7 @@ def _modulo(kmax=0):
     """Modulo compilado; kmax > 0 habilita o kernel knn com vetores locais de kmax posicoes (16, 32 ou 64)."""
     if kmax not in _MOD:
         import cupy as cp
+
         opcoes = ("--use_fast_math",) + ((f"-DKMAX={kmax}",) if kmax else ())
         _MOD[kmax] = cp.RawModule(code=_FONTE, options=opcoes)
     return _MOD[kmax]
@@ -142,18 +145,19 @@ class Grade:
     """Pontos F ordenados por celula (celula = raio) na GPU. Coordenadas em float32 relativas a origem da grade
     (precisao ~0,01 um para pecas de algumas centenas de mm)."""
 
-    BLOCO = 1_000_000          # consultas por lancamento (limita memoria de saida)
+    BLOCO = 1_000_000  # consultas por lancamento (limita memoria de saida)
 
     def __init__(self, F, raio):
         import cupy as cp
+
         self.cp = cp
-        F = cp.asarray(F, dtype=cp.float64)                  # numpy ou cupy
+        F = cp.asarray(F, dtype=cp.float64)  # numpy ou cupy
         if raio <= 0 or not len(F):
             raise ValueError("raio > 0 e F nao vazio")
         self.raio = float(raio)
         self.origem = cp.asnumpy(F.min(0)) - raio
-        self.dims = (np.floor((cp.asnumpy(F.max(0)) - self.origem) / raio).astype(np.int64) + 2)
-        if float(np.prod(self.dims.astype(float))) >= 2 ** 62:
+        self.dims = np.floor((cp.asnumpy(F.max(0)) - self.origem) / raio).astype(np.int64) + 2
+        if float(np.prod(self.dims.astype(float))) >= 2**62:
             raise ValueError("grade grande demais para chave int64")
         Fl = (F - cp.asarray(self.origem)).astype(cp.float32)
         self.n = len(Fl)
@@ -169,8 +173,21 @@ class Grade:
 
     def _args(self):
         gx, gy, gz = (int(x) for x in self.dims)
-        return (self.P, self.u, self.st, self.en, np.int32(len(self.u)), np.float32(0), np.float32(0), np.float32(0),
-                np.float32(self.raio), np.int64(gx), np.int64(gy), np.int64(gz), np.float32(self.raio))
+        return (
+            self.P,
+            self.u,
+            self.st,
+            self.en,
+            np.int32(len(self.u)),
+            np.float32(0),
+            np.float32(0),
+            np.float32(0),
+            np.float32(self.raio),
+            np.int64(gx),
+            np.int64(gy),
+            np.int64(gz),
+            np.float32(self.raio),
+        )
 
     def _q(self, Q):
         cp = self.cp
@@ -190,12 +207,25 @@ class Grade:
         Wd, Vd = self._ordenado(W), self._ordenado(VF)
         out = np.empty(len(Q), np.float64)
         for a in range(0, len(Q), self.BLOCO):
-            q = self._q(Q[a:a + self.BLOCO])
-            nq = cp.ascontiguousarray(cp.asarray(np.asarray(NQ[a:a + self.BLOCO], np.float32)))
+            q = self._q(Q[a : a + self.BLOCO])
+            nq = cp.ascontiguousarray(cp.asarray(np.asarray(NQ[a : a + self.BLOCO], np.float32)))
             D = cp.empty(len(q), cp.float32)
-            self._lancar("mean_shift", len(q), q, nq, np.int32(len(q)), Wd, Vd, np.float32(sigma_t), np.float32(sigma_h),
-                         np.float32(vmin), np.float32(max_passo), D, *self._args())
-            out[a:a + len(q)] = cp.asnumpy(D)
+            self._lancar(
+                "mean_shift",
+                len(q),
+                q,
+                nq,
+                np.int32(len(q)),
+                Wd,
+                Vd,
+                np.float32(sigma_t),
+                np.float32(sigma_h),
+                np.float32(vmin),
+                np.float32(max_passo),
+                D,
+                *self._args(),
+            )
+            out[a : a + len(q)] = cp.asnumpy(D)
         return out
 
     def somas(self, Q, sigma=None, gpu=False):
@@ -204,11 +234,19 @@ class Grade:
         cp = self.cp
         out = cp.empty((len(Q), 10), cp.float32) if gpu else np.empty((len(Q), 10), np.float64)
         for a in range(0, len(Q), self.BLOCO):
-            q = self._q(Q[a:a + self.BLOCO])
+            q = self._q(Q[a : a + self.BLOCO])
             S = cp.empty((len(q), 10), cp.float32)
-            self._lancar("pca_somas", len(q), q, np.int32(len(q)), np.float32(sigma or 1.0), np.int32(sigma is not None),
-                         S, *self._args())
-            out[a:a + len(q)] = S if gpu else cp.asnumpy(S)
+            self._lancar(
+                "pca_somas",
+                len(q),
+                q,
+                np.int32(len(q)),
+                np.float32(sigma or 1.0),
+                np.int32(sigma is not None),
+                S,
+                *self._args(),
+            )
+            out[a : a + len(q)] = S if gpu else cp.asnumpy(S)
         return out
 
     def pca(self, Q, sigma=None):
@@ -229,10 +267,10 @@ class Grade:
         cp = self.cp
         out = cp.empty(len(Q), cp.int64) if gpu else np.empty(len(Q), np.int64)
         for a in range(0, len(Q), self.BLOCO):
-            q = self._q(Q[a:a + self.BLOCO])
+            q = self._q(Q[a : a + self.BLOCO])
             N = cp.empty(len(q), cp.int32)
             self._lancar("contar", len(q), q, np.int32(len(q)), N, *self._args())
-            out[a:a + len(q)] = N if gpu else cp.asnumpy(N)
+            out[a : a + len(q)] = N if gpu else cp.asnumpy(N)
         return out
 
     def mais_proximo(self, Q, gpu=False):
@@ -242,15 +280,15 @@ class Grade:
         d = xp.empty(len(Q), xp.float64)
         j = xp.empty(len(Q), xp.int64)
         for a in range(0, len(Q), self.BLOCO):
-            q = self._q(Q[a:a + self.BLOCO])
+            q = self._q(Q[a : a + self.BLOCO])
             Dm = cp.empty(len(q), cp.float32)
             J = cp.empty(len(q), cp.int32)
             self._lancar("mais_proximo", len(q), q, np.int32(len(q)), Dm, J, *self._args())
             ok = J >= 0
             jj = cp.where(ok, self.ordem[cp.maximum(J, 0)], -1)
             dd = cp.where(ok, Dm.astype(cp.float64), cp.inf)
-            j[a:a + len(q)] = jj if gpu else cp.asnumpy(jj)
-            d[a:a + len(q)] = dd if gpu else cp.asnumpy(dd)
+            j[a : a + len(q)] = jj if gpu else cp.asnumpy(jj)
+            d[a : a + len(q)] = dd if gpu else cp.asnumpy(dd)
         return d, j
 
     def knn(self, Q, k, gpu=False):
@@ -265,21 +303,22 @@ class Grade:
         j = xp.empty((len(Q), k), xp.int64)
         bloco = max(1, min(self.BLOCO, 150_000_000 // (12 * k)))
         for a in range(0, len(Q), bloco):
-            q = self._q(Q[a:a + bloco])
+            q = self._q(Q[a : a + bloco])
             Dm = cp.empty((len(q), k), cp.float32)
             J = cp.empty((len(q), k), cp.int32)
             self._lancar("knn", len(q), q, np.int32(len(q)), np.int32(k), Dm, J, *self._args(), kmax=kmax)
             ok = J >= 0
             jj = cp.where(ok, self.ordem[cp.maximum(J, 0)], -1)
             dd = cp.where(ok, Dm.astype(cp.float64), cp.inf)
-            j[a:a + len(q)] = jj if gpu else cp.asnumpy(jj)
-            d[a:a + len(q)] = dd if gpu else cp.asnumpy(dd)
+            j[a : a + len(q)] = jj if gpu else cp.asnumpy(jj)
+            d[a : a + len(q)] = dd if gpu else cp.asnumpy(dd)
         return d, j
 
 
 # ---------------------------------------------------------------- referencia CPU exata (mesma semantica de raio)
 def mean_shift_cpu(F, Q, NQ, W, VF, raio, sigma_t, sigma_h, max_passo=0.1, vmin=0.05):
     from scipy.spatial import cKDTree
+
     arv = cKDTree(F)
     D = np.zeros(len(Q))
     for i, lista in enumerate(arv.query_ball_point(Q, raio)):
@@ -288,7 +327,7 @@ def mean_shift_cpu(F, Q, NQ, W, VF, raio, sigma_t, sigma_h, max_passo=0.1, vmin=
         e = F[lista] - Q[i]
         h = e @ NQ[i]
         t2 = np.maximum((e * e).sum(1) - h * h, 0)
-        w = W[lista] * np.exp(-t2 / (2 * sigma_t ** 2) - h * h / (2 * sigma_h ** 2))
+        w = W[lista] * np.exp(-t2 / (2 * sigma_t**2) - h * h / (2 * sigma_h**2))
         w *= VF[lista] @ NQ[i] > vmin
         D[i] = np.clip((w * h).sum() / max(w.sum(), 1e-9), -max_passo, max_passo)
     return D
@@ -296,14 +335,16 @@ def mean_shift_cpu(F, Q, NQ, W, VF, raio, sigma_t, sigma_h, max_passo=0.1, vmin=
 
 def contar_cpu(F, Q, raio):
     from scipy.spatial import cKDTree
+
     return np.asarray(cKDTree(F).query_ball_point(Q, raio, return_length=True))
 
 
 if __name__ == "__main__":
     import time
+
     rng = np.random.default_rng(0)
     F = rng.uniform(0, 20, (200_000, 3))
-    F[:, 2] = 0.01 * rng.standard_normal(len(F))       # superficie fina
+    F[:, 2] = 0.01 * rng.standard_normal(len(F))  # superficie fina
     Q = F[:2000] + [0, 0, 0.03]
     NQ = np.tile([0, 0, 1.0], (len(Q), 1))
     W = np.ones(len(F))
