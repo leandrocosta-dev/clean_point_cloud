@@ -1,0 +1,19 @@
+{
+ "caso": "p8_metrica_entrega",
+ "registrado": "2026-11-08 14:39:19",
+ "entradas": {
+  "NUVEM": "d17aa7ff27c59a06b27c6c594a0e3a71f2e3bf8c5d05f34bad33e6df49db006c"
+ },
+ "valores": {
+  "pontos": 834686,
+  "rugosidade.n": 30000,
+  "rugosidade.raio_mm": 1.2118492867540123,
+  "rugosidade.mediana_um": 38.546247763220286,
+  "rugosidade.p90_um": 213.01481738349543,
+  "rugosidade.p99_um": 269.40963834195963,
+  "componentes.voxel_mm": 0.5,
+  "componentes.total": 1,
+  "componentes.fracao_maior": 1.0,
+  "componentes.pontos_fora_do_maior": 0
+ }
+}

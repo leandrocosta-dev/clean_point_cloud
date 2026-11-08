@@ -1,0 +1,61 @@
+{
+ "versao": 1,
+ "nota": "Entradas congeladas: nunca editar os arquivos de entrada; se mudarem, o sha256 diverge da base (codigo 3). Rodadas em pipeline/output/regressao/ (ignorado pelo git).",
+ "casos": [
+  {
+   "nome": "p8_metrica_entrega",
+   "descricao": "Projeto 8 (MIRACO) aprovado: metricas da fusao nitida entregue (834.686 pontos no guia)",
+   "entradas": {"NUVEM": {"caminho": "{HOME}/Desktop/Projeto8_ENTREGA/peca_fusao_nitida.ply"}},
+   "comandos": [],
+   "metricas": [{"tipo": "nuvem", "arquivo": "{NUVEM}", "rugosidade": true, "componentes": true}],
+   "limites": {"pontos": {"igual": 834686}},
+   "tolerancias": {"rugosidade.mediana_um": {"rel": 0.02}, "rugosidade.p90_um": {"rel": 0.03}, "rugosidade.p99_um": {"rel": 0.05}}
+  },
+  {
+   "nome": "p8_triagem",
+   "descricao": "Triagem do Projeto 8: peca pequena apoiada sobre placa, corte 1 mm, sem plano extenso",
+   "entradas": {"PROJ": {"caminho": "D:/Projects/Project20261107_074043"}},
+   "comandos": [["{PY}", "{PIPE}/triagem.py", "{PROJ}", "--saida", "{SAIDA}/perfil.json"]],
+   "metricas": [{"tipo": "json", "arquivo": "{SAIDA}/perfil.json",
+                 "campos": {"ext_max_mm": "recomendacao.limpar_raw.ext_max_mm", "so_peca": "recomendacao.limpar_raw.so_peca",
+                            "altura_min": "recomendacao.limpar_por_placa.altura_min", "plano": "recomendacao.limpar_por_placa.plano",
+                            "diagonal_mm": "recomendacao.diagonal_peca_mm", "scans": "recomendacao.scans"},
+                 "contem": {"caso_pequena": {"chave": "recomendacao.caso", "texto": "peca pequena"},
+                            "caso_apoiada": {"chave": "recomendacao.caso", "texto": "apoiada"}}}],
+   "limites": {"caso_pequena": {"igual": true}, "caso_apoiada": {"igual": true}, "so_peca": {"igual": true},
+               "altura_min": {"igual": 1.0}, "plano": {"igual": null}, "scans": {"igual": 4}},
+   "tolerancias": {"diagonal_mm": {"rel": 0.1}}
+  },
+  {
+   "nome": "p9_triagem",
+   "descricao": "Triagem do Projeto 9: peca pequena apoiada, --plano extenso, aviso do scan sem placa (092319)",
+   "entradas": {"PROJ": {"caminho": "D:/Projects/Project20261108_092049"}},
+   "comandos": [["{PY}", "{PIPE}/triagem.py", "{PROJ}", "--saida", "{SAIDA}/perfil.json"]],
+   "metricas": [{"tipo": "json", "arquivo": "{SAIDA}/perfil.json",
+                 "campos": {"ext_max_mm": "recomendacao.limpar_raw.ext_max_mm", "so_peca": "recomendacao.limpar_raw.so_peca",
+                            "altura_min": "recomendacao.limpar_por_placa.altura_min", "plano": "recomendacao.limpar_por_placa.plano",
+                            "diagonal_mm": "recomendacao.diagonal_peca_mm", "scans": "recomendacao.scans"},
+                 "contem": {"caso_pequena": {"chave": "recomendacao.caso", "texto": "peca pequena"},
+                            "caso_apoiada": {"chave": "recomendacao.caso", "texto": "apoiada"},
+                            "aviso_sem_placa": {"chave": "recomendacao.avisos", "texto": "20261108_092319"}}}],
+   "limites": {"caso_pequena": {"igual": true}, "caso_apoiada": {"igual": true}, "plano": {"igual": "extenso"},
+               "aviso_sem_placa": {"igual": true}, "altura_min": {"igual": 1.0}, "scans": {"igual": 8}},
+   "tolerancias": {"diagonal_mm": {"rel": 0.1}}
+  },
+  {
+   "nome": "p7_fundir_nitido",
+   "descricao": "Projeto 7: fundir_nitido sobre a limpeza acesso_corrigido com as poses finais; comparado a nuvem_nitida entregue (~8 min CPU)",
+   "caro": true,
+   "entradas": {"PROJ": {"caminho": "{RAIZ}/pipeline/output/Project20261106_210152_acesso_corrigido"},
+                "POSES": {"caminho": "{HOME}/Desktop/Projeto7_ENTREGA/poses_finais.json"},
+                "REF": {"caminho": "{HOME}/Desktop/Projeto7_ENTREGA/nuvem_nitida.ply"}},
+   "comandos": [["{PY}", "{PIPE}/fundir_nitido.py", "{PROJ}", "--poses", "{POSES}", "--saida", "{SAIDA}/fusao"]],
+   "metricas": [{"tipo": "nuvem", "arquivo": "{SAIDA}/fusao/nuvem_nitida.ply", "referencia": "{REF}", "rugosidade": true, "componentes": true}],
+   "limites": {"distancias.ref_para_a.mediana_mm": {"max": 0.02}, "distancias.cobertura_ref.0.3mm": {"min": 0.99},
+               "vies.vies_abs_mediana_um": {"max": 5.0}},
+   "tolerancias": {"pontos": {"rel": 0.02}, "rugosidade.mediana_um": {"rel": 0.1}, "rugosidade.p90_um": {"rel": 0.15},
+                   "rugosidade.p99_um": {"ignorar": true}, "componentes.total": {"ignorar": true},
+                   "componentes.pontos_fora_do_maior": {"ignorar": true}}
+  }
+ ]
+}

@@ -1,0 +1,18 @@
+{
+ "caso": "p9_triagem",
+ "registrado": "2026-11-08 14:39:27",
+ "entradas": {
+  "PROJ": "9c459497b47d841ff8656104a4eae6edc70113d81df57e7006cd89af85428ba7"
+ },
+ "valores": {
+  "ext_max_mm": 100,
+  "so_peca": true,
+  "altura_min": 1.0,
+  "plano": "extenso",
+  "diagonal_mm": 55.85205417366674,
+  "scans": 8,
+  "caso_pequena": true,
+  "caso_apoiada": true,
+  "aviso_sem_placa": true
+ }
+}
