@@ -12,21 +12,22 @@ Fase 2 - avaliar:  python pipeline/aprender.py avaliar [--variantes v1 v2 ...] [
       lixo    = parte dos pontos mantidos a mais de 3 mm do fuse.ply
     Nao gera nenhum .revo.
 """
+
 import argparse
 import json
 import os
-import sys
 import tempfile
 import time
 from concurrent.futures import ProcessPoolExecutor
 
 import numpy as np
-from scipy.spatial import cKDTree
 
 AQUI = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.join(AQUI, "revo_frames"))
+import gpu
+from registro_gpu import avaliar_encaixe, icp, nuvem_voxel
+
 CACHE = os.path.join(os.path.dirname(AQUI), "aprendizado", "cache")
-FITNESS_GT = 0.85       # fuse.ply alinhado aos quadros com isso ou mais vira gabarito
+FITNESS_GT = 0.85  # fuse.ply alinhado aos quadros com isso ou mais vira gabarito
 
 
 def listar_scans(raiz):
@@ -37,8 +38,9 @@ def listar_scans(raiz):
             continue
         for n in json.load(open(os.path.join(d, revos[0]), encoding="utf-8"))["nodes"]:
             pasta = os.path.join(d, "data", n["guid"])
-            if os.path.isfile(os.path.join(pasta, "cache", "frames.dataset")) and \
-                    os.path.isfile(os.path.join(pasta, "raw_preview.ply")):
+            if os.path.isfile(os.path.join(pasta, "cache", "frames.dataset")) and os.path.isfile(
+                os.path.join(pasta, "raw_preview.ply")
+            ):
                 yield proj, n["guid"], pasta
 
 
@@ -55,8 +57,9 @@ def _extrair_um(args):
     if os.path.exists(saida):
         return proj, sid, "cache"
     os.environ.setdefault("REVO_THREADS", "4")
+    import open3d as o3d  # so leitura do fuse.ply (I/O)
     from revo_projeto import RevoScan, ler_ply
-    import open3d as o3d
+
     t0 = time.time()
     sc = None
     try:
@@ -79,33 +82,48 @@ def _extrair_um(args):
                 miras.append(T[:3, 3] + T[:3, :3] @ np.array([0, 0, -1.0]) * dcam)
             A = _limitar(np.vstack(A).astype(np.float32), 1_000_000)
             # amostra de avaliacao: outros quadros (deslocados), mais densa
-            ke = ks[1:: max(1, len(ks) // 80)]
-            E = _limitar(np.vstack([p for p in (sc.pontos(k, passo=4)[0] for k in ke) if p is not None]).astype(np.float32), 1_200_000)
+            ke = ks[1 :: max(1, len(ks) // 80)]
+            E = _limitar(
+                np.vstack([p for p in (sc.pontos(k, passo=4)[0] for k in ke) if p is not None]).astype(np.float32),
+                1_200_000,
+            )
             _, prev = ler_ply(os.path.join(pasta, "raw_preview.ply"))
             X = prev[:, :3].astype(float)
-            esp = float(np.median(cKDTree(X).query(X, k=2, workers=-1)[0][:, 1]))
+            esp = float(np.median(gpu.para_cpu(gpu.knn(X, X, 2)[0])[:, 1]))
             fit, rmse, F = 0.0, 0.0, np.zeros((0, 3), np.float32)
             fp = os.path.join(pasta, "fuse.ply")
             if os.path.isfile(fp):
-                reg = o3d.pipelines.registration
-                Fp = o3d.io.read_point_cloud(fp)
-                src = Fp.voxel_down_sample(0.8)
-                dst = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(E.astype(float))).voxel_down_sample(0.8)
-                src.estimate_normals(o3d.geometry.KDTreeSearchParamHybrid(radius=2.4, max_nn=30))
-                dst.estimate_normals(o3d.geometry.KDTreeSearchParamHybrid(radius=2.4, max_nn=30))
-                pp = reg.TransformationEstimationPointToPlane()
-                ic = reg.registration_icp(src, dst, 2.0, np.eye(4), pp)
-                ic = reg.registration_icp(src, dst, 0.8, ic.transformation, pp)
-                fit, rmse = float(ic.fitness), float(ic.inlier_rmse)
-                Fa = Fp.voxel_down_sample(0.8).transform(ic.transformation)
-                F = _limitar(np.asarray(Fa.points, np.float32), 400_000)
+                Fpts = np.asarray(o3d.io.read_point_cloud(fp).points)
+                src = nuvem_voxel(Fpts, 0.8, normais=True)  # voxel 0,8 mm, normais no raio 2,4 mm (GPU)
+                dst = nuvem_voxel(E.astype(float), 0.8, normais=True)
+                T, _ = icp(src, dst, np.eye(4), 2.0, 30)  # ICP ponto-plano, 30 iteracoes por escala (padrao do Open3D)
+                T, _ = icp(src, dst, T, 0.8, 30)
+                fit, rmse, _ = avaliar_encaixe(src, dst, 0.8, T)  # fitness / rmse como evaluate_registration
+                Fa = nuvem_voxel(Fpts, 0.8, normais=False).transformada(T)
+                F = _limitar(gpu.para_cpu(Fa.pts).astype(np.float32), 400_000)
             sc.c.close()
         os.makedirs(CACHE, exist_ok=True)
-        np.savez_compressed(saida, A=A, E=E, miras=np.array(miras, np.float32), F=F,
-                            meta=json.dumps(dict(proj=proj, scan=sid, erro_calib=max(erros.values()), esp=esp,
-                                                 fitness=fit, rmse=rmse, quadros=len(ks), t=round(time.time() - t0))))
+        np.savez_compressed(
+            saida,
+            A=A,
+            E=E,
+            miras=np.array(miras, np.float32),
+            F=F,
+            meta=json.dumps(
+                dict(
+                    proj=proj,
+                    scan=sid,
+                    erro_calib=max(erros.values()),
+                    esp=esp,
+                    fitness=fit,
+                    rmse=rmse,
+                    quadros=len(ks),
+                    t=round(time.time() - t0),
+                )
+            ),
+        )
         return proj, sid, f"ok fitness {fit:.2f}"
-    except Exception as e:
+    except Exception as e:  # Isola falhas de backend/automacao ou de um item do lote.
         return proj, sid, f"ERRO {type(e).__name__}: {e}"
     finally:
         if sc is not None:
@@ -134,7 +152,8 @@ def variante_mascara(nome, A, miras, E):
     Sintaxe: <base>[,chave=valor...]   base = plano | sem_base | auto_<limite de cruzamento>
     As chaves sao parametros de segmentar_peca (ex.: margem_mm=3, min_tam_frac=0.02, faixa_base=2).
     """
-    from revo_projeto import segmentar_peca, mascara_manter
+    from revo_projeto import mascara_manter, segmentar_peca
+
     base, *extras = nome.split(",")
     kw = {k: (v if k == "selecao" else float(v)) for k, v in (x.split("=") for x in extras)}
     if base == "plano":
@@ -143,24 +162,27 @@ def variante_mascara(nome, A, miras, E):
         modo = "sem"
     else:
         modo, kw["cruza_max"] = "auto", float(base.split("_")[1])
-    seg = segmentar_peca(None, amostra=(A.astype(float), miras.astype(float)), transitorio=False,
-                         log=lambda *x: None, modo_base=modo, **kw)
+    seg = segmentar_peca(
+        None,
+        amostra=(A.astype(float), miras.astype(float)),
+        transitorio=False,
+        log=lambda *x: None,
+        modo_base=modo,
+        **kw,
+    )
     return mascara_manter(E.astype(float), seg), dict(sem_base=seg["sem_base"], cruza=seg["cruza"])
 
 
 def metricas(F, E, keep):
-    arv = cKDTree(F)
-    d_todos = arv.query(E, workers=-1)[0]
+    """recall / lixo / fracao mantida (vizinhancas na GPU: `idx < 0` = alem do limite)."""
+    Fg, Eg = gpu.para_gpu(F, np.float64), gpu.para_gpu(E, np.float64)
+    keep = np.asarray(keep, bool)
+    Ek = Eg[gpu.para_gpu(keep)] if keep.any() else Eg[:0]
     # recall relativo: pontos do fuse cobertos por algum ponto mantido / cobertos por algum ponto qualquer
-    cob_todos = np.zeros(len(F), bool)
-    cob_keep = np.zeros(len(F), bool)
-    arvE = cKDTree(E)
-    d, _ = arvE.query(F, workers=-1)
-    cob_todos = d < 0.6
-    arvK = cKDTree(E[keep]) if keep.any() else None
-    cob_keep = (arvK.query(F, workers=-1)[0] < 0.6) if arvK is not None else np.zeros(len(F), bool)
-    recall = cob_keep.sum() / max(1, cob_todos.sum())
-    lixo = float((d_todos[keep] > 3.0).mean()) if keep.any() else 0.0
+    cob_todos = gpu.vizinho_mais_proximo(Eg, Fg, dist_max=0.6)[1] >= 0
+    cob_keep = (gpu.vizinho_mais_proximo(Ek, Fg, dist_max=0.6)[1] >= 0) if len(Ek) else cob_todos & False
+    recall = int(cob_keep.sum()) / max(1, int(cob_todos.sum()))
+    lixo = float((gpu.vizinho_mais_proximo(Fg, Ek, dist_max=3.0)[1] < 0).mean()) if len(Ek) else 0.0
     return float(recall), lixo, float(keep.mean())
 
 
@@ -175,7 +197,7 @@ def _aval_um(args):
             keep, info = variante_mascara(v, A, miras, E)
             rec, lixo, kf = metricas(F, E, keep)
             out[v] = dict(proj=meta["proj"], scan=meta["scan"], recall=rec, lixo=lixo, mantido=kf, **info)
-        except Exception as e:
+        except Exception as e:  # Isola falhas de backend/automacao ou de um item do lote.
             out[v] = dict(proj=meta["proj"], scan=meta["scan"], erro=f"{type(e).__name__}: {e}")
     return out
 
@@ -196,10 +218,20 @@ def cmd_avaliar(a):
         rc = np.array([x["recall"] for x in ok])
         mant = np.array([x["mantido"] for x in ok])
         # saldo contra a 1a variante: quanto limpa a mais - 20 x recall perdido (perder peca estraga a malha)
-        limpa = np.array([ref[i]["mantido"] - r[i]["mantido"] for i in range(len(r)) if "recall" in r[i] and "recall" in ref[i]])
-        perda = np.array([max(0.0, ref[i]["recall"] - r[i]["recall"]) for i in range(len(r)) if "recall" in r[i] and "recall" in ref[i]])
-        print(f"{v:<52}{rc.mean()*100:7.2f}%{np.percentile(rc,5)*100:4.0f}%{(rc<0.98).sum():5d}{(rc<0.90).sum():5d}"
-              f"{np.mean([x['lixo'] for x in ok])*100:6.2f}%{mant.mean()*100:6.1f}%{limpa.mean()*100:7.2f}%{(limpa - 20 * perda).sum():8.2f}")
+        limpa = np.array(
+            [ref[i]["mantido"] - r[i]["mantido"] for i in range(len(r)) if "recall" in r[i] and "recall" in ref[i]]
+        )
+        perda = np.array(
+            [
+                max(0.0, ref[i]["recall"] - r[i]["recall"])
+                for i in range(len(r))
+                if "recall" in r[i] and "recall" in ref[i]
+            ]
+        )
+        print(
+            f"{v:<52}{rc.mean() * 100:7.2f}%{np.percentile(rc, 5) * 100:4.0f}%{(rc < 0.98).sum():5d}{(rc < 0.90).sum():5d}"
+            f"{np.mean([x['lixo'] for x in ok]) * 100:6.2f}%{mant.mean() * 100:6.1f}%{limpa.mean() * 100:7.2f}%{(limpa - 20 * perda).sum():8.2f}"
+        )
     if a.saida:
         json.dump(res, open(a.saida, "w", encoding="utf-8"), indent=1)
 
@@ -207,7 +239,8 @@ def cmd_avaliar(a):
 def _perdas_um(args):
     """Onde estao os pontos do fuse que a variante perde: na faixa do plano (mesa) ou acima (peca)?"""
     f, variante = args
-    from revo_projeto import segmentar_peca, mascara_manter
+    from revo_projeto import mascara_manter, segmentar_peca
+
     A, E, miras, F, meta = carregar(os.path.join(CACHE, f))
     if meta["fitness"] < FITNESS_GT or len(F) == 0:
         return None
@@ -219,21 +252,35 @@ def _perdas_um(args):
         modo = "sem"
     else:
         modo, kw["cruza_max"] = "auto", float(base.split("_")[1])
-    seg = segmentar_peca(None, amostra=(A.astype(float), miras.astype(float)), transitorio=False,
-                         log=lambda *x: None, modo_base=modo, **kw)
+    seg = segmentar_peca(
+        None,
+        amostra=(A.astype(float), miras.astype(float)),
+        transitorio=False,
+        log=lambda *x: None,
+        modo_base=modo,
+        **kw,
+    )
     keep = mascara_manter(E.astype(float), seg)
     # plano de referencia (RANSAC) para classificar altura, mesmo no modo sem base
-    n, d, _ = __import__("revo_projeto").plano_ransac(A[:: max(1, len(A) // 40000)].astype(float), thr=1.0, it=800)
-    d_keep = cKDTree(E[keep]).query(F, workers=-1)[0] if keep.any() else np.full(len(F), 9e9)
-    perdido = d_keep > 0.6
-    hF = F @ n + d
+    n, d, _ = gpu.ransac_plano(A[:: max(1, len(A) // 40000)].astype(float), limiar=1.0, iteracoes=800)
+    Fg, Eg = gpu.para_gpu(F, np.float64), gpu.para_gpu(E, np.float64)
+    if keep.any():
+        perdido = gpu.vizinho_mais_proximo(Eg[gpu.para_gpu(keep)], Fg, dist_max=0.6)[1] < 0
+    else:
+        perdido = gpu.xp().ones(len(Fg), bool)
+    hF = gpu.para_cpu(Fg @ gpu.para_gpu(n) + d)
     # so conta o que o proprio conjunto E enxerga (cobertura): ignora pontos do fuse sem nenhum ponto E perto
-    cob = cKDTree(E).query(F, workers=-1)[0] < 0.6
-    perdido &= cob
+    cob = gpu.para_cpu(gpu.vizinho_mais_proximo(Eg, Fg, dist_max=0.6)[1] >= 0)
+    perdido = gpu.para_cpu(perdido) & cob
     tot = max(1, cob.sum())
-    return dict(proj=meta["proj"], scan=meta["scan"], perda=float(perdido.sum() / tot),
-                perda_acima=float((perdido & (hF > 3)).sum() / tot), perda_faixa=float((perdido & (np.abs(hF) <= 3)).sum() / tot),
-                fuse_acima=float((cob & (hF > 3)).sum() / tot))
+    return dict(
+        proj=meta["proj"],
+        scan=meta["scan"],
+        perda=float(perdido.sum() / tot),
+        perda_acima=float((perdido & (hF > 3)).sum() / tot),
+        perda_faixa=float((perdido & (np.abs(hF) <= 3)).sum() / tot),
+        fuse_acima=float((cob & (hF > 3)).sum() / tot),
+    )
 
 
 def cmd_perdas(a):
@@ -243,47 +290,82 @@ def cmd_perdas(a):
     r.sort(key=lambda x: -x["perda"])
     print(f"variante {a.variante}: {len(r)} scans")
     print(f"{'scan':<42}{'perda':>7}{'acima plano':>13}{'na faixa':>10}{'fuse acima':>12}")
-    for x in r[:a.topo]:
-        print(f"{x['proj'][-15:]+'/'+x['scan'][-15:]:<42}{x['perda']*100:6.1f}%{x['perda_acima']*100:12.1f}%{x['perda_faixa']*100:9.1f}%{x['fuse_acima']*100:11.1f}%")
-    pa = np.array([x["perda_acima"] for x in r]); pf = np.array([x["perda_faixa"] for x in r]); pt = np.array([x["perda"] for x in r])
-    print(f"media: perda {pt.mean()*100:.1f}% (acima do plano {pa.mean()*100:.1f}% | na faixa {pf.mean()*100:.1f}%) | scans com perda ACIMA > 10%: {(pa>0.10).sum()}")
+    for x in r[: a.topo]:
+        print(
+            f"{x['proj'][-15:] + '/' + x['scan'][-15:]:<42}{x['perda'] * 100:6.1f}%{x['perda_acima'] * 100:12.1f}%{x['perda_faixa'] * 100:9.1f}%{x['fuse_acima'] * 100:11.1f}%"
+        )
+    pa = np.array([x["perda_acima"] for x in r])
+    pf = np.array([x["perda_faixa"] for x in r])
+    pt = np.array([x["perda"] for x in r])
+    print(
+        f"media: perda {pt.mean() * 100:.1f}% (acima do plano {pa.mean() * 100:.1f}% | na faixa {pf.mean() * 100:.1f}%) | scans com perda ACIMA > 10%: {(pa > 0.10).sum()}"
+    )
     if a.saida:
         json.dump(r, open(a.saida, "w", encoding="utf-8"), indent=1)
 
 
 def caracteristicas(A, miras):
     """Numeros baratos da cena (so a nuvem bruta, sem gabarito) que ajudam a decidir se o plano e mesa."""
-    from revo_projeto import plano_ransac, cruzamento_base
+    from revo_projeto import cruzamento_base
+
     A = A.astype(float)
-    n, d, frac = plano_ransac(A[:: max(1, len(A) // 40000)], thr=1.0, it=800)
-    h = A @ n + d
-    u = np.cross(n, [1.0, 0, 0]); u /= np.linalg.norm(u); w = np.cross(n, u)
-    uv = np.c_[A @ u, A @ w]
-    pl = np.abs(h) <= 1.2
+    xp = gpu.xp()
+    n, d, frac = gpu.ransac_plano(A[:: max(1, len(A) // 40000)], limiar=1.0, iteracoes=800)
+    Ag = gpu.para_gpu(A, xp.float64)
+    h = Ag @ xp.asarray(n) + d
+    u = np.cross(n, [1.0, 0, 0])
+    u /= np.linalg.norm(u)
+    w = np.cross(n, u)
+    uv = xp.stack([Ag @ xp.asarray(u), Ag @ xp.asarray(w)], axis=1)
+    pl = xp.abs(h) <= 1.2
     ac = h > 3
     celula = 2.0
 
     def celulas(m):
-        c = np.floor(uv[m] / celula).astype(np.int64)
-        return len(np.unique(c[:, 0] * 1000003 + c[:, 1])) if m.any() else 0
-    c_pl, c_ac, c_tot = celulas(pl), celulas(ac), celulas(np.ones(len(A), bool))
-    hp = np.percentile(h, [1, 50, 90, 99])
-    amp = np.ptp(uv, 0)
+        if not bool(m.any()):
+            return 0
+        c = xp.floor(uv[m] / celula).astype(xp.int64)
+        return int(len(gpu.agrupar(c[:, 0] * 1000003 + c[:, 1])[0]))
+
+    c_pl, c_ac, c_tot = celulas(pl), celulas(ac), celulas(xp.ones(len(Ag), bool))
+    hp = gpu.para_cpu(xp.percentile(h, xp.asarray([1.0, 50.0, 90.0, 99.0])))
+    amp = gpu.para_cpu(xp.ptp(uv, 0))
     # miras: a camera olha para a peca; altura e dispersao delas em relacao ao plano
-    hm = miras.astype(float) @ n + d
-    return dict(frac_plano=float(frac), cruza=cruzamento_base(A, n, d),
-                acima=float(ac.mean()), abaixo=float((h < -3).mean()),
-                cel_plano=c_pl, cel_acima=c_ac, razao_cel=c_pl / max(1, c_ac), plano_cobre=c_pl / max(1, c_tot),
-                h01=float(hp[0]), h50=float(hp[1]), h90=float(hp[2]), h99=float(hp[3]),
-                ext_plano_max=float(amp.max()), ext_plano_min=float(amp.min()), achatamento=float(hp[3] / max(1.0, amp.max())),
-                mira_h_med=float(np.median(hm)), mira_h_dp=float(hm.std()), n_miras=int(len(miras)))
+    hm = gpu.para_cpu(gpu.para_gpu(miras, xp.float64) @ xp.asarray(n) + d)
+    return dict(
+        frac_plano=float(frac),
+        cruza=cruzamento_base(A, n, d),
+        acima=float(ac.mean()),
+        abaixo=float((h < -3).mean()),
+        cel_plano=c_pl,
+        cel_acima=c_ac,
+        razao_cel=c_pl / max(1, c_ac),
+        plano_cobre=c_pl / max(1, c_tot),
+        h01=float(hp[0]),
+        h50=float(hp[1]),
+        h90=float(hp[2]),
+        h99=float(hp[3]),
+        ext_plano_max=float(amp.max()),
+        ext_plano_min=float(amp.min()),
+        achatamento=float(hp[3] / max(1.0, amp.max())),
+        mira_h_med=float(np.median(hm)),
+        mira_h_dp=float(hm.std()),
+        n_miras=int(len(miras)),
+    )
 
 
 def _carac_um(f):
     A, E, miras, F, meta = carregar(os.path.join(CACHE, f))
     r = caracteristicas(A, miras)
-    r.update(proj=meta["proj"], scan=meta["scan"], esp=meta["esp"], erro_calib=meta["erro_calib"],
-             fitness=meta["fitness"], tem_gt=bool(meta["fitness"] >= FITNESS_GT and len(F) > 0), n_fuse=int(len(F)))
+    r.update(
+        proj=meta["proj"],
+        scan=meta["scan"],
+        esp=meta["esp"],
+        erro_calib=meta["erro_calib"],
+        fitness=meta["fitness"],
+        tem_gt=bool(meta["fitness"] >= FITNESS_GT and len(F) > 0),
+        n_fuse=int(len(F)),
+    )
     return r
 
 
@@ -298,7 +380,8 @@ def cmd_caracteristicas(a):
 def _prod_um(args):
     """Pipeline de producao de verdade (com quadros): transitorios ligados/desligados + ilhas 3D."""
     f, raiz = args
-    from revo_projeto import RevoScan, segmentar_peca, mascara_manter, ilhas_3d, mascara_ilhas
+    from revo_projeto import RevoScan, ilhas_3d, mascara_ilhas, mascara_manter, segmentar_peca
+
     A, E, miras, F, meta = carregar(os.path.join(CACHE, f))
     if meta["fitness"] < FITNESS_GT or len(F) == 0:
         return None
@@ -317,9 +400,13 @@ def _prod_um(args):
                 if ilh is not None:
                     keep &= mascara_ilhas(E.astype(float), ilh)
                 rec, lixo, kf = metricas(F, E, keep)
-                out[rot] = dict(recall=rec, lixo=lixo, mantido=kf,
-                                trans_vox=int(seg["trans"]["flag"].sum()) if seg.get("trans") else 0)
-    except Exception as e:
+                out[rot] = dict(
+                    recall=rec,
+                    lixo=lixo,
+                    mantido=kf,
+                    trans_vox=int(seg["trans"]["flag"].sum()) if seg.get("trans") else 0,
+                )
+    except Exception as e:  # Isola falhas de backend/automacao ou de um item do lote.
         out["erro"] = f"{type(e).__name__}: {e}"
     finally:
         if sc is not None:
@@ -332,15 +419,19 @@ def cmd_producao(a):
     with ProcessPoolExecutor(a.jobs) as ex:
         r = [x for x in ex.map(_prod_um, [(f, a.raiz) for f in arqs]) if x]
     ok = [x for x in r if "com_trans" in x]
-    print(f"{len(ok)} scans (erros: {len(r)-len(ok)})")
+    print(f"{len(ok)} scans (erros: {len(r) - len(ok)})")
     for rot in ("sem_trans", "com_trans"):
         rc = np.array([x[rot]["recall"] for x in ok])
-        print(f"{rot:<10} recall {rc.mean()*100:6.2f}% p5 {np.percentile(rc,5)*100:4.0f}% <98%: {(rc<0.98).sum():3d} <90%: {(rc<0.90).sum():3d} "
-              f"lixo {np.mean([x[rot]['lixo'] for x in ok])*100:5.2f}% mantido {np.mean([x[rot]['mantido'] for x in ok])*100:5.1f}%")
+        print(
+            f"{rot:<10} recall {rc.mean() * 100:6.2f}% p5 {np.percentile(rc, 5) * 100:4.0f}% <98%: {(rc < 0.98).sum():3d} <90%: {(rc < 0.90).sum():3d} "
+            f"lixo {np.mean([x[rot]['lixo'] for x in ok]) * 100:5.2f}% mantido {np.mean([x[rot]['mantido'] for x in ok]) * 100:5.1f}%"
+        )
     pior = sorted(ok, key=lambda x: x["com_trans"]["recall"] - x["sem_trans"]["recall"])[:8]
     print("scans em que os transitorios mais prejudicam (recall com - sem):")
     for x in pior:
-        print(f"   {x['proj'][-15:]}/{x['scan'][-15:]}: {x['com_trans']['recall']*100:5.1f}% vs {x['sem_trans']['recall']*100:5.1f}% (voxels transitorios {x['com_trans']['trans_vox']})")
+        print(
+            f"   {x['proj'][-15:]}/{x['scan'][-15:]}: {x['com_trans']['recall'] * 100:5.1f}% vs {x['sem_trans']['recall'] * 100:5.1f}% (voxels transitorios {x['com_trans']['trans_vox']})"
+        )
     if a.saida:
         json.dump(r, open(a.saida, "w", encoding="utf-8"), indent=1)
 
@@ -369,8 +460,13 @@ def main():
     pr.add_argument("--jobs", type=int, default=4)
     pr.add_argument("--saida")
     a = ap.parse_args()
-    {"extrair": cmd_extrair, "avaliar": cmd_avaliar, "perdas": cmd_perdas, "caracteristicas": cmd_caracteristicas,
-     "producao": cmd_producao}[a.cmd](a)
+    {
+        "extrair": cmd_extrair,
+        "avaliar": cmd_avaliar,
+        "perdas": cmd_perdas,
+        "caracteristicas": cmd_caracteristicas,
+        "producao": cmd_producao,
+    }[a.cmd](a)
 
 
 if __name__ == "__main__":

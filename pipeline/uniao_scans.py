@@ -11,20 +11,19 @@
    `bin` guarda (marcadores) esta em coordenadas da camera e nao muda. Depois e so fundir no Revo.
 O projeto original nunca e tocado; a saida nao pode existir.
 """
+
 import argparse
 import json
 import os
 import shutil
 import sqlite3
-import struct
 import sys
 import tempfile
 
+import gpu
 import numpy as np
-import open3d as o3d
-
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "revo_frames"))
-from revo_projeto import RevoScan, SIG_SQL, SIG_REVO
+from registro_gpu import avaliar_encaixe, fracao_proxima, icp, nuvem_voxel, transformar
+from revo_projeto import SIG_REVO, SIG_SQL, RevoScan
 
 
 def nuvem_dos_frames(scan, alvo_pontos=1_500_000):
@@ -38,27 +37,31 @@ def nuvem_dos_frames(scan, alvo_pontos=1_500_000):
 
 
 def _pcd(P, voxel):
-    p = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(P))
-    p = p.voxel_down_sample(voxel)
-    p.estimate_normals(o3d.geometry.KDTreeSearchParamHybrid(radius=voxel * 3, max_nn=50))
-    return p
+    """Centroides de voxel + normais PCA (raio 3 x voxel) na GPU (antes: voxel_down_sample + estimate_normals)."""
+    return nuvem_voxel(P, voxel, normais=True)
 
 
 def _pca(P):
-    c = P.mean(0)
-    w, V = np.linalg.eigh(np.cov((P - c).T))
+    """Centro e eixos principais (colunas, do maior para o menor autovalor, det > 0). Covariancia na GPU, 3x3 na CPU."""
+    xp = gpu.xp()
+    Pg = gpu.para_gpu(P, xp.float64)
+    c = Pg.mean(0)
+    Y = Pg - c
+    w, V = np.linalg.eigh(gpu.para_cpu(Y.T @ Y / max(len(Pg) - 1, 1)))
     V = V[:, ::-1]
     if np.linalg.det(V) < 0:
         V[:, 2] *= -1
-    return c, V
+    return gpu.para_cpu(c), V
 
 
 def _plano_dominante(P, voxel=0.25):
-    """(n, d) do maior plano da nuvem (n.x + d = 0): numa peca em disco, e a face de extremidade."""
-    p = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(P)).voxel_down_sample(voxel)
-    m, _ = p.segment_plane(distance_threshold=0.2, ransac_n=3, num_iterations=3000)
-    n = np.array(m[:3])
-    return n / np.linalg.norm(n), float(m[3]) / np.linalg.norm(n)
+    """(n, d) do maior plano da nuvem (n.x + d = 0): numa peca em disco, e a face de extremidade. RANSAC na GPU."""
+    xp = gpu.xp()
+    C, _ = gpu.reduzir_voxel(
+        gpu.para_gpu(P, xp.float64), voxel, origem=gpu.para_gpu(P, xp.float64).min(0) - 0.5 * voxel
+    )
+    n, d, _ = gpu.ransac_plano(C, limiar=0.2, iteracoes=3000)
+    return n / np.linalg.norm(n), float(d) / np.linalg.norm(n)
 
 
 def alinhar(PA, PB, voxel=1.0, sementes=5, lados="opostos"):
@@ -72,22 +75,37 @@ def alinhar(PA, PB, voxel=1.0, sementes=5, lados="opostos"):
       'mesmo'    planos paralelos e a < 1 mm (mesma face para o mesmo lado)
       'auto'     o de maior encaixe, sem exigir nada.
     Aborta se nenhum candidato com bom encaixe tem a relacao pedida."""
+    import open3d as o3d  # so FPFH + RANSAC por features (sem equivalente na GPU; CPU)
+
     reg = o3d.pipelines.registration
     a, b = _pcd(PA, voxel), _pcd(PB, voxel)
     feat = lambda p: reg.compute_fpfh_feature(p, o3d.geometry.KDTreeSearchParamHybrid(radius=voxel * 8, max_nn=200))
-    fa, fb = feat(a), feat(b)
+    a3, b3 = a.para_o3d(), b.para_o3d()
+    fa, fb = feat(a3), feat(b3)
     inicios = []
     for sd in range(sementes):
         o3d.utility.random.seed(sd)
         r = reg.registration_ransac_based_on_feature_matching(
-            b, a, fb, fa, True, voxel * 3, reg.TransformationEstimationPointToPoint(False), 3,
+            b3,
+            a3,
+            fb,
+            fa,
+            True,
+            voxel * 3,
+            reg.TransformationEstimationPointToPoint(False),
+            3,
             [reg.CorrespondenceCheckerBasedOnEdgeLength(0.9), reg.CorrespondenceCheckerBasedOnDistance(voxel * 3)],
-            reg.RANSACConvergenceCriteria(4_000_000, 0.9999))
+            reg.RANSACConvergenceCriteria(4_000_000, 0.9999),
+        )
         inicios.append(("ransac", r.transformation))
     cA, VA = _pca(PA)
     cB, VB = _pca(PB)
-    for nome, F in (("pca+", np.diag([1, 1, 1])), ("pca-x", np.diag([1, -1, -1])),
-                    ("pca-y", np.diag([-1, 1, -1])), ("pca-z", np.diag([-1, -1, 1]))):
+    for nome, F in (
+        ("pca+", np.diag([1, 1, 1])),
+        ("pca-x", np.diag([1, -1, -1])),
+        ("pca-y", np.diag([-1, 1, -1])),
+        ("pca-z", np.diag([-1, -1, 1])),
+    ):
         T = np.eye(4)
         T[:3, :3] = VA @ F @ VB.T
         T[:3, 3] = cA - T[:3, :3] @ cB
@@ -100,41 +118,68 @@ def alinhar(PA, PB, voxel=1.0, sementes=5, lados="opostos"):
     for origem, T in inicios:
         for v, lim in escalas:
             pa, pb = nuvens[v]
-            ic = reg.registration_icp(pb, pa, lim, T, reg.TransformationEstimationPointToPlane(),
-                                      reg.ICPConvergenceCriteria(max_iteration=100))
-            T = ic.transformation
-        if any(np.degrees(np.arccos(np.clip((np.trace((np.linalg.inv(T) @ c["T"])[:3, :3]) - 1) / 2, -1, 1))) < 1.0
-               and np.linalg.norm((np.linalg.inv(T) @ c["T"])[:3, 3]) < 1.0 for c in cands):
-            continue                                            # mesma solucao ja vista
+            T, _ = icp(pb, pa, T, lim, 100)
+        fit, rmse, _ = avaliar_encaixe(pb, pa, lim, T)  # como ic.fitness / ic.inlier_rmse do Open3D (ultima escala)
+        if any(
+            np.degrees(np.arccos(np.clip((np.trace((np.linalg.inv(T) @ c["T"])[:3, :3]) - 1) / 2, -1, 1))) < 1.0
+            and np.linalg.norm((np.linalg.inv(T) @ c["T"])[:3, 3]) < 1.0
+            for c in cands
+        ):
+            continue  # mesma solucao ja vista
         n2 = T[:3, :3] @ nB
         d2 = dB - n2 @ T[:3, 3]
         if n2 @ nA < 0:
             n2, d2 = -n2, -d2
         par = abs(float(n2 @ nA))
         sep = abs(dA - d2) if par > 0.9 else None
-        Pb = PB @ T[:3, :3].T + T[:3, 3]
-        z = np.r_[PA @ nA, Pb @ nA]
-        ext = float(np.ptp(z))
-        cands.append(dict(origem=origem, T=T, fitness=float(ic.fitness), rmse=float(ic.inlier_rmse),
-                          separacao_planos_mm=None if sep is None else float(sep), extensao_uniao_mm=ext,
-                          relacao=("indef" if sep is None else "mesmo" if sep < 1.0 else "opostos" if sep > 0.4 * ext else "intermediaria")))
+        xp = gpu.xp()
+        z = xp.concatenate(
+            [
+                gpu.para_gpu(PA, xp.float64) @ xp.asarray(nA),
+                transformar(gpu.para_gpu(PB, xp.float64), T) @ xp.asarray(nA),
+            ]
+        )
+        ext = float(z.max() - z.min())
+        cands.append(
+            dict(
+                origem=origem,
+                T=T,
+                fitness=float(fit),
+                rmse=float(rmse),
+                separacao_planos_mm=None if sep is None else float(sep),
+                extensao_uniao_mm=ext,
+                relacao=(
+                    "indef"
+                    if sep is None
+                    else "mesmo"
+                    if sep < 1.0
+                    else "opostos"
+                    if sep > 0.4 * ext
+                    else "intermediaria"
+                ),
+            )
+        )
     melhor_fit = max(c["fitness"] for c in cands)
     bons = [c for c in cands if c["fitness"] >= 0.5 * melhor_fit and c["rmse"] < 0.25]
     if lados != "auto":
         bons = [c for c in bons if c["relacao"] == lados]
     if not bons:
-        raise SystemExit(f"nenhum candidato com bom encaixe tem faces '{lados}': " + json.dumps(
-            [{k: v for k, v in c.items() if k != "T"} for c in cands], indent=1))
+        raise SystemExit(
+            f"nenhum candidato com bom encaixe tem faces '{lados}': "
+            + json.dumps([{k: v for k, v in c.items() if k != "T"} for c in cands], indent=1)
+        )
     esc = max(bons, key=lambda c: c["fitness"] if lados == "auto" else c["fitness"] - 3 * c["rmse"])
     T = esc["T"]
     # cobertura nos dois sentidos, com B ja alinhada (a 2 mm, em voxel de 1 mm)
-    b2 = o3d.geometry.PointCloud(b)
-    b2.transform(T)
-    dab = np.asarray(a.compute_point_cloud_distance(b2))
-    dba = np.asarray(b2.compute_point_cloud_distance(a))
-    return dict(T=T, escolhido={k: v for k, v in esc.items() if k != "T"}, lados=lados,
-                candidatos=[{k: v for k, v in c.items() if k != "T"} for c in cands],
-                cobertura_A_por_B=float((dab < voxel * 2).mean()), cobertura_B_por_A=float((dba < voxel * 2).mean()))
+    b2 = b.transformada(T)
+    return dict(
+        T=T,
+        escolhido={k: v for k, v in esc.items() if k != "T"},
+        lados=lados,
+        candidatos=[{k: v for k, v in c.items() if k != "T"} for c in cands],
+        cobertura_A_por_B=fracao_proxima(b2, a, voxel * 2),
+        cobertura_B_por_A=fracao_proxima(a, b2, voxel * 2),
+    )
 
 
 def _bin_com_pose(b, T):
@@ -146,9 +191,10 @@ def _bin_com_pose(b, T):
 
 def unir(proj, gA, gB, T, saida, nome_scan):
     """Grava `saida` (projeto .revo com um scan `nome_scan`) com os quadros de A e os de B levados por T."""
-    from revo_projeto import ler_ply, gravar_ply
+    from revo_projeto import gravar_ply, ler_ply
+
     saida = os.path.abspath(saida)
-    if os.path.exists(saida) and (not os.path.isdir(saida) or os.listdir(saida)):   # pasta vazia pode ser reaproveitada
+    if os.path.exists(saida) and (not os.path.isdir(saida) or os.listdir(saida)):  # pasta vazia pode ser reaproveitada
         sys.exit(f"destino ja existe: {saida}")
     pasta = os.path.join(saida, "data", nome_scan)
     shutil.copytree(os.path.join(proj, "data", gA), pasta)
@@ -167,14 +213,23 @@ def unir(proj, gA, gB, T, saida, nome_scan):
         maxA = cn.execute("select max(id) from FrameInfo").fetchone()[0]
         off = maxA + 2 - cn.execute("select min(id) from b.FrameInfo").fetchone()[0]
         nA = cn.execute("select count(*) from FrameInfo").fetchone()[0]
-        cn.execute("insert into FrameRGBD select id+?, version, type, width, height, data, weights from b.FrameRGBD", (off,))
-        for (id_, ver, seq, drop, gap, pose, opt, mk, mkd, b) in cn.execute("select * from b.FrameInfo order by id").fetchall():
-            cn.execute("insert into FrameInfo values (?,?,?,?,?,?,?,?,?,?)",
-                       (id_ + off, ver, seq, drop, gap, pose, opt, mk, mkd, _bin_com_pose(b, T)))
+        cn.execute(
+            "insert into FrameRGBD select id+?, version, type, width, height, data, weights from b.FrameRGBD", (off,)
+        )
+        for id_, ver, seq, drop, gap, pose, opt, mk, mkd, b in cn.execute(
+            "select * from b.FrameInfo order by id"
+        ).fetchall():
+            cn.execute(
+                "insert into FrameInfo values (?,?,?,?,?,?,?,?,?,?)",
+                (id_ + off, ver, seq, drop, gap, pose, opt, mk, mkd, _bin_com_pose(b, T)),
+            )
         cn.commit()
-        n = dict(A=nA, B=cn.execute("select count(*) from b.FrameInfo").fetchone()[0],
-                 total=cn.execute("select count(*) from FrameInfo").fetchone()[0],
-                 rgbd=cn.execute("select count(*) from FrameRGBD").fetchone()[0])
+        n = dict(
+            A=nA,
+            B=cn.execute("select count(*) from b.FrameInfo").fetchone()[0],
+            total=cn.execute("select count(*) from FrameInfo").fetchone()[0],
+            rgbd=cn.execute("select count(*) from FrameRGBD").fetchone()[0],
+        )
         cn.execute("detach b")
         cn.close()
     for ext in ("-wal", "-shm", "-journal"):
@@ -186,16 +241,16 @@ def unir(proj, gA, gB, T, saida, nome_scan):
     hA, pA = ler_ply(os.path.join(pasta, "raw_preview.ply"))
     _, pB = ler_ply(os.path.join(proj, "data", gB, "raw_preview.ply"))
     pB = pB.copy()
-    pB[:, :3] = pB[:, :3] @ T[:3, :3].T + T[:3, 3]
+    pB[:, :3] = transformar(pB[:, :3], T)
     if pB.shape[1] >= 6:
-        pB[:, 3:6] = pB[:, 3:6] @ T[:3, :3].T
+        pB[:, 3:6] = transformar(pB[:, 3:6], np.block([[T[:3, :3], np.zeros((3, 1))], [np.zeros((1, 3)), np.eye(1)]]))
     gravar_ply(os.path.join(pasta, "raw_preview.ply"), hA, np.vstack([pA, pB]))
     # metadados do scan
     rv = os.path.join(pasta, "property.rvproj")
     meta = json.load(open(rv, encoding="utf-8"))
     meta["guid"] = nome_scan
-    meta["can_fuse_optimize"] = False          # o Revo reotimizaria as poses dos quadros e desfaria o alinhamento medido
-    meta.setdefault("scan_param", {})["scan_mode"] = 1   # scanMode 0 (geometria) liga isOptimize no Revo
+    meta["can_fuse_optimize"] = False  # o Revo reotimizaria as poses dos quadros e desfaria o alinhamento medido
+    meta.setdefault("scan_param", {})["scan_mode"] = 1  # scanMode 0 (geometria) liga isOptimize no Revo
     if "vf_count" in meta:
         meta["vf_count"] = n["rgbd"]
     json.dump(meta, open(rv, "w", encoding="utf-8"), indent=4)
@@ -203,9 +258,15 @@ def unir(proj, gA, gB, T, saida, nome_scan):
     origem = [f for f in os.listdir(proj) if f.endswith(".revo")][0]
     r = json.load(open(os.path.join(proj, origem), encoding="utf-8"))
     no = next(x for x in r["nodes"] if x["guid"] == gA)
-    r.update(guid=str(__import__("uuid").uuid4()), name=nome_scan, edit_time=str(int(__import__("time").time())),
-             nodes=[dict(no, guid=nome_scan, name=nome_scan)])
-    r["size"] = str(sum(os.path.getsize(os.path.join(dp, f)) for dp, _, fs in os.walk(os.path.join(saida, "data")) for f in fs))
+    r.update(
+        guid=str(__import__("uuid").uuid4()),
+        name=nome_scan,
+        edit_time=str(int(__import__("time").time())),
+        nodes=[dict(no, guid=nome_scan, name=nome_scan)],
+    )
+    r["size"] = str(
+        sum(os.path.getsize(os.path.join(dp, f)) for dp, _, fs in os.walk(os.path.join(saida, "data")) for f in fs)
+    )
     json.dump(r, open(os.path.join(saida, nome_scan + ".revo"), "w", encoding="utf-8"), indent=4)
     return n
 
@@ -217,7 +278,7 @@ def _T_do_quadro(pg, k):
         for seg in pg:
             if seg["k0"] <= k <= seg["k1"]:
                 return np.array(seg["T"])
-        return None                                   # quadro fora dos segmentos escolhidos: nao entra
+        return None  # quadro fora dos segmentos escolhidos: nao entra
     return np.array(pg)
 
 
@@ -227,13 +288,14 @@ def unir_varios(proj, poses, base, saida, nome_scan, excluir=(), copias=None):
     Como `unir`, para N scans: `poses` = {guid: 4x4 que leva o scan ao referencial comum}. O scan `base` e
     copiado e tem TODAS as poses multiplicadas pela sua propria transformacao (ela pode nao ser a identidade);
     os demais sao anexados com os ids deslocados. Devolve a contagem de quadros por scan."""
-    from revo_projeto import ler_ply, gravar_ply
+    from revo_projeto import gravar_ply, ler_ply
+
     saida = os.path.abspath(saida)
-    if os.path.exists(saida) and (not os.path.isdir(saida) or os.listdir(saida)):   # pasta vazia pode ser reaproveitada
+    if os.path.exists(saida) and (not os.path.isdir(saida) or os.listdir(saida)):  # pasta vazia pode ser reaproveitada
         sys.exit(f"destino ja existe: {saida}")
     pasta = os.path.join(saida, "data", nome_scan)
     shutil.copytree(os.path.join(proj, "data", base), pasta)
-    for lixo in ("global_register_pose.pose",):          # poses do scan de origem: nao valem para o conjunto
+    for lixo in ("global_register_pose.pose",):  # poses do scan de origem: nao valem para o conjunto
         f = os.path.join(pasta, "cache", lixo)
         if os.path.exists(f):
             os.remove(f)
@@ -260,8 +322,14 @@ def unir_varios(proj, poses, base, saida, nome_scan, excluir=(), copias=None):
             contagem[base] += 1
             for c_ in range(1, (copias or {}).get(base, 1)):
                 novo_id = id_ + c_ * 100_000_000
-                cn.execute("insert into FrameRGBD select ?, version, type, width, height, data, weights from FrameRGBD where id=?", (novo_id, id_))
-                cn.execute("insert into FrameInfo select ?, version, seqId, droped, gapRGB, pose, optimized, markerCount, markerData, bin from FrameInfo where id=?", (novo_id, id_))
+                cn.execute(
+                    "insert into FrameRGBD select ?, version, type, width, height, data, weights from FrameRGBD where id=?",
+                    (novo_id, id_),
+                )
+                cn.execute(
+                    "insert into FrameInfo select ?, version, seqId, droped, gapRGB, pose, optimized, markerCount, markerData, bin from FrameInfo where id=?",
+                    (novo_id, id_),
+                )
         proximo = cn.execute("select max(id) from FrameInfo").fetchone()[0] + 2
         for g in outros:
             src = os.path.join(proj, "data", g, "cache", "frames.dataset")
@@ -273,20 +341,32 @@ def unir_varios(proj, poses, base, saida, nome_scan, excluir=(), copias=None):
                 h.write(SIG_SQL)
             cn.execute("attach ? as b", (dsg,))
             off = proximo - cn.execute("select min(id) from b.FrameInfo").fetchone()[0]
-            cn.execute("insert into FrameRGBD select id+?, version, type, width, height, data, weights from b.FrameRGBD", (off,))
+            cn.execute(
+                "insert into FrameRGBD select id+?, version, type, width, height, data, weights from b.FrameRGBD",
+                (off,),
+            )
             for k, (id_, ver, seq, drop, gap, pose, opt, mk, mkd, b) in enumerate(
-                    cn.execute("select * from b.FrameInfo order by id").fetchall()):
+                cn.execute("select * from b.FrameInfo order by id").fetchall()
+            ):
                 Tk = _T_do_quadro(poses[g], k)
                 if Tk is None:
                     cn.execute("delete from FrameRGBD where id=?", (id_ + off,))
                     continue
-                cn.execute("insert into FrameInfo values (?,?,?,?,?,?,?,?,?,?)",
-                           (id_ + off, ver, seq, drop, gap, pose, opt, mk, mkd, _bin_com_pose(b, Tk)))
+                cn.execute(
+                    "insert into FrameInfo values (?,?,?,?,?,?,?,?,?,?)",
+                    (id_ + off, ver, seq, drop, gap, pose, opt, mk, mkd, _bin_com_pose(b, Tk)),
+                )
                 contagem[g] = contagem.get(g, 0) + 1
                 for c_ in range(1, (copias or {}).get(g, 1)):
                     novo_id = id_ + off + c_ * 100_000_000
-                    cn.execute("insert into FrameRGBD select ?, version, type, width, height, data, weights from FrameRGBD where id=?", (novo_id, id_ + off))
-                    cn.execute("insert into FrameInfo select ?, version, seqId, droped, gapRGB, pose, optimized, markerCount, markerData, bin from FrameInfo where id=?", (novo_id, id_ + off))
+                    cn.execute(
+                        "insert into FrameRGBD select ?, version, type, width, height, data, weights from FrameRGBD where id=?",
+                        (novo_id, id_ + off),
+                    )
+                    cn.execute(
+                        "insert into FrameInfo select ?, version, seqId, droped, gapRGB, pose, optimized, markerCount, markerData, bin from FrameInfo where id=?",
+                        (novo_id, id_ + off),
+                    )
             proximo = cn.execute("select max(id) from FrameInfo").fetchone()[0] + 2
             cn.commit()
             cn.execute("detach b")
@@ -307,26 +387,38 @@ def unir_varios(proj, poses, base, saida, nome_scan, excluir=(), copias=None):
     for g in [base] + outros:
         _, pg = ler_ply(os.path.join(proj, "data", g, "raw_preview.ply"))
         pg = pg.copy()
-        T = np.array(poses[g][0]["T"]) if isinstance(poses[g], (list, tuple)) and poses[g] and isinstance(poses[g][0], dict) else np.array(poses[g])   # so preview 3D (exibicao)
-        pg[:, :3] = pg[:, :3] @ T[:3, :3].T + T[:3, 3]
+        T = (
+            np.array(poses[g][0]["T"])
+            if isinstance(poses[g], (list, tuple)) and poses[g] and isinstance(poses[g][0], dict)
+            else np.array(poses[g])
+        )  # so preview 3D (exibicao)
+        pg[:, :3] = transformar(pg[:, :3], T)
         if pg.shape[1] >= 6:
-            pg[:, 3:6] = pg[:, 3:6] @ T[:3, :3].T
+            pg[:, 3:6] = transformar(
+                pg[:, 3:6], np.block([[T[:3, :3], np.zeros((3, 1))], [np.zeros((1, 3)), np.eye(1)]])
+            )
         partes.append(pg)
     gravar_ply(os.path.join(pasta, "raw_preview.ply"), hA, np.vstack(partes))
     rv = os.path.join(pasta, "property.rvproj")
     meta = json.load(open(rv, encoding="utf-8"))
     meta["guid"] = nome_scan
-    meta["can_fuse_optimize"] = False          # o Revo reotimizaria as poses dos quadros e desfaria o alinhamento medido
-    meta.setdefault("scan_param", {})["scan_mode"] = 1   # scanMode 0 (geometria) liga isOptimize no Revo
+    meta["can_fuse_optimize"] = False  # o Revo reotimizaria as poses dos quadros e desfaria o alinhamento medido
+    meta.setdefault("scan_param", {})["scan_mode"] = 1  # scanMode 0 (geometria) liga isOptimize no Revo
     if "vf_count" in meta:
         meta["vf_count"] = rgbd
     json.dump(meta, open(rv, "w", encoding="utf-8"), indent=4)
     origem = [f for f in os.listdir(proj) if f.endswith(".revo")][0]
     r = json.load(open(os.path.join(proj, origem), encoding="utf-8"))
     no = next(x for x in r["nodes"] if x["guid"] == base)
-    r.update(guid=str(__import__("uuid").uuid4()), name=nome_scan, edit_time=str(int(__import__("time").time())),
-             nodes=[dict(no, guid=nome_scan, name=nome_scan)])
-    r["size"] = str(sum(os.path.getsize(os.path.join(dp, f)) for dp, _, fs in os.walk(os.path.join(saida, "data")) for f in fs))
+    r.update(
+        guid=str(__import__("uuid").uuid4()),
+        name=nome_scan,
+        edit_time=str(int(__import__("time").time())),
+        nodes=[dict(no, guid=nome_scan, name=nome_scan)],
+    )
+    r["size"] = str(
+        sum(os.path.getsize(os.path.join(dp, f)) for dp, _, fs in os.walk(os.path.join(saida, "data")) for f in fs)
+    )
     json.dump(r, open(os.path.join(saida, nome_scan + ".revo"), "w", encoding="utf-8"), indent=4)
     return dict(por_scan=contagem, total=total, rgbd=rgbd)
 
@@ -337,8 +429,12 @@ def main():
     ap.add_argument("--scans", nargs=2, required=True, metavar=("A", "B"))
     ap.add_argument("--saida")
     ap.add_argument("--nome", help="nome/guid do scan unido (padrao: <A>_uniao)")
-    ap.add_argument("--lados", choices=("opostos", "mesmo", "auto"), default="opostos",
-                    help="relacao entre as faces de A e B: opostos = peca virada (topo + base); mesmo = mesma face")
+    ap.add_argument(
+        "--lados",
+        choices=("opostos", "mesmo", "auto"),
+        default="opostos",
+        help="relacao entre as faces de A e B: opostos = peca virada (topo + base); mesmo = mesma face",
+    )
     ap.add_argument("--so-alinhar", action="store_true")
     a = ap.parse_args()
     proj = os.path.abspath(a.projeto)
@@ -362,7 +458,9 @@ def main():
         sys.exit("pouca sobreposicao entre as partes: alinhamento nao confiavel, nada foi gravado")
     nome = a.nome or a.scans[0] + "_uniao"
     n = unir(proj, a.scans[0], a.scans[1], T, a.saida, nome)
-    json.dump(dict(r, T=T.tolist(), quadros=n), open(os.path.join(os.path.abspath(a.saida), "uniao.json"), "w"), indent=1)
+    json.dump(
+        dict(r, T=T.tolist(), quadros=n), open(os.path.join(os.path.abspath(a.saida), "uniao.json"), "w"), indent=1
+    )
     print("quadros:", n, "| saida:", os.path.abspath(a.saida))
 
 

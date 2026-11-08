@@ -8,18 +8,19 @@ n.(q - y) de todos os pares sobrepostos ao mesmo tempo (Gauss-Newton, Tukey), co
 entre segmentos consecutivos do mesmo scan (deriva pequena) e o no de referencia fixo.
 Parametrizacao local: T <- T exp(xi), xi = (omega, v).
 """
+
 import argparse
 import json
 import os
-import sys
 import time
 
-import numpy as np
-from scipy.spatial import cKDTree
-
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from alinhar_varios import baixa_prioridade
 import alinhar_segmentos as S
+import gpu
+import numpy as np
+from alinhar_varios import baixa_prioridade
+from comum import configurar_log
+
+_LOGGER = configurar_log(__name__)
 
 
 def exp_se3(x):
@@ -29,7 +30,7 @@ def exp_se3(x):
     if th < 1e-12:
         R = np.eye(3) + K
     else:
-        R = np.eye(3) + np.sin(th) / th * K + (1 - np.cos(th)) / th ** 2 * (K @ K)
+        R = np.eye(3) + np.sin(th) / th * K + (1 - np.cos(th)) / th**2 * (K @ K)
     T = np.eye(4)
     T[:3, :3] = R
     T[:3, 3] = v
@@ -44,14 +45,30 @@ def log_so3(R):
     return th / (2 * np.sin(th)) * np.array([R[2, 1] - R[1, 2], R[0, 2] - R[2, 0], R[1, 0] - R[0, 1]])
 
 
+class _Indices:
+    """Grade de vizinhanca (GPU) de cada no, na tolerancia atual; so a tolerancia corrente fica na memoria."""
+
+    def __init__(self, P):
+        self.P = P
+        self.tol = None
+        self.grades = {}
+
+    def obter(self, i, tol):
+        if self.tol != tol:
+            self.tol, self.grades = tol, {}
+        if i not in self.grades:
+            self.grades[i] = gpu.Indice(self.P[i], tol)
+        return self.grades[i]
+
+
 def carregar(nos):
-    P, N, arv = [], [], []
+    """Pontos e normais de cada no (cupy float64) e os indices de vizinhanca."""
+    P, N = [], []
     for no in nos:
         c = S._normais(np.load(no["arquivo"]))
-        P.append(np.asarray(c.points, np.float64))
-        N.append(np.asarray(c.normals, np.float64))
-        arv.append(cKDTree(P[-1]))
-    return P, N, arv
+        P.append(c.pts)
+        N.append(c.normais)
+    return P, N, _Indices(P)
 
 
 def tukey_c(tol, modo="auto"):
@@ -80,7 +97,9 @@ def conectividade(n, pares, odo_idx, ref):
 
 def _termos_pares(P, N, arv, T, pares, amostras, tol, c, jacobiano=True):
     """Custo robusto de Tukey sobre uma amostra FIXA de cada par (pontos sem correspondencia a < tol contam
-    c^2/6, entao o custo e comparavel entre poses). Opcionalmente acumula H e b (Gauss-Newton)."""
+    c^2/6, entao o custo e comparavel entre poses). Opcionalmente acumula H e b (Gauss-Newton).
+    Os residuos e jacobianos de cada par sao calculados na GPU; H (6n x 6n) e b ficam na CPU (sistema pequeno)."""
+    xp = gpu.xp()
     n = len(T)
     H = np.zeros((6 * n, 6 * n)) if jacobiano else None
     b = np.zeros(6 * n) if jacobiano else None
@@ -88,50 +107,60 @@ def _termos_pares(P, N, arv, T, pares, amostras, tol, c, jacobiano=True):
     rho_max = c * c / 6.0
     for (i, j), sel in zip(pares, amostras):
         Rr = np.linalg.inv(T[i]) @ T[j]
-        Sj = P[j][sel]
-        q = Sj @ Rr[:3, :3].T + Rr[:3, 3]
-        d, idx = S.vizinho(arv[i], q, len(P[i]))
-        m = d < tol
-        custo += rho_max * float((~m).sum())
-        if m.sum() < 200:
-            custo += rho_max * float(m.sum())
+        Rg = xp.asarray(Rr[:3, :3])
+        Sj = P[j][gpu.para_gpu(sel)]
+        q = Sj @ Rg.T + xp.asarray(Rr[:3, 3])
+        _, idx = arv.obter(i, tol).mais_proximo(q)
+        m = idx >= 0
+        n_ok = int(m.sum())
+        custo += rho_max * float(len(q) - n_ok)
+        if n_ok < 200:
+            custo += rho_max * float(n_ok)
             continue
         q, Sj, idx = q[m], Sj[m], idx[m]
         nrm = N[i][idx]
-        r = np.einsum("ij,ij->i", q - P[i][idx], nrm)
-        dentro = np.abs(r) < c
+        r = ((q - P[i][idx]) * nrm).sum(1)
+        dentro = xp.abs(r) < c
         u = (r / c) ** 2
-        custo += float(np.sum(np.where(dentro, rho_max * (1 - (1 - u) ** 3), rho_max)))
-        w = np.where(dentro, (1 - u) ** 2, 0.0)
-        soma_wr2 += float(np.sum(w * r * r))
+        custo += float(xp.where(dentro, rho_max * (1 - (1 - u) ** 3), rho_max).sum())
+        w = xp.where(dentro, (1 - u) ** 2, 0.0)
+        soma_wr2 += float((w * r * r).sum())
         soma_w += float(w.sum())
         usados += 1
         if not jacobiano:
             continue
-        mloc = nrm @ Rr[:3, :3]                              # R_ij^T n  (linhas)
-        Jj = np.hstack([np.cross(Sj, mloc), mloc])
-        Ji = -np.hstack([np.cross(q, nrm), nrm])
+        mloc = nrm @ Rg  # R_ij^T n  (linhas)
+        Jj = xp.concatenate([xp.cross(Sj, mloc), mloc], axis=1)
+        Ji = -xp.concatenate([xp.cross(q, nrm), nrm], axis=1)
+        W = xp.concatenate([Ji * w[:, None], Jj * w[:, None]], axis=1)  # (n, 12): [Wi | Wj]
+        J = xp.concatenate([Ji, Jj], axis=1)
+        M = gpu.para_cpu(W.T @ J)  # [[Wi'Ji, Wi'Jj], [Wj'Ji, Wj'Jj]]
+        g = gpu.para_cpu(W.T @ r)
         ci, cj = slice(6 * i, 6 * i + 6), slice(6 * j, 6 * j + 6)
-        Wi = Ji * w[:, None]
-        Wj = Jj * w[:, None]
-        H[ci, ci] += Wi.T @ Ji
-        H[cj, cj] += Wj.T @ Jj
-        H[ci, cj] += Wi.T @ Jj
-        H[cj, ci] += Wj.T @ Ji
-        b[ci] += Wi.T @ r
-        b[cj] += Wj.T @ r
-    return dict(custo=custo, H=H, b=b, rms=float(np.sqrt(soma_wr2 / soma_w)) if soma_w > 0 else float("nan"),
-                n_efetivo=soma_w, pares_usados=usados)
+        H[ci, ci] += M[:6, :6]
+        H[cj, cj] += M[6:, 6:]
+        H[ci, cj] += M[:6, 6:]
+        H[cj, ci] += M[6:, :6]
+        b[ci] += g[:6]
+        b[cj] += g[6:]
+    return dict(
+        custo=custo,
+        H=H,
+        b=b,
+        rms=float(np.sqrt(soma_wr2 / soma_w)) if soma_w > 0 else float("nan"),
+        n_efetivo=soma_w,
+        pares_usados=usados,
+    )
 
 
 def _termos_odometria(T, odo_idx, sigma_odo, alavanca, H=None, b=None):
     """Restricao fraca entre segmentos consecutivos (relativo ~ identidade). Devolve o custo quadratico."""
-    wo = 1.0 / (sigma_odo ** 2)
-    esc = np.array([alavanca] * 3 + [1.0] * 3)                # rotacao em mm de alavanca
+    wo = 1.0 / (sigma_odo**2)
+    esc = np.array([alavanca] * 3 + [1.0] * 3)  # rotacao em mm de alavanca
     Je = np.diag(esc)
     A = Je.T @ (np.eye(6) * wo) @ Je
     custo = 0.0
-    for (s, t) in odo_idx:
+    for s, t in odo_idx:
         D = np.linalg.inv(T[s]) @ T[t]
         e = np.r_[log_so3(D[:3, :3]), D[:3, 3]] * esc
         custo += 0.5 * wo * float(e @ e)
@@ -148,8 +177,22 @@ def _termos_odometria(T, odo_idx, sigma_odo, alavanca, H=None, b=None):
     return custo
 
 
-def otimizar_direto(nos, T, pares, odo_idx, ref, iteracoes=14, amostra=12000, sigma_odo=0.5, alavanca=200.0,
-                    tol_ini=6.0, tol_fim=1.2, log=print, tukey="auto", tentativas=5):
+def otimizar_direto(
+    nos,
+    T,
+    pares,
+    odo_idx,
+    ref,
+    iteracoes=14,
+    amostra=12000,
+    sigma_odo=0.5,
+    alavanca=200.0,
+    tol_ini=6.0,
+    tol_fim=1.2,
+    log=print,
+    tukey="auto",
+    tentativas=5,
+):
     """Gauss-Newton amortecido (Levenberg-Marquardt) com ACEITACAO: um passo so e aplicado se o custo robusto
     (pares + odometria, mesma amostra) cair; senao o amortecimento aumenta e o passo e refeito (ate
     `tentativas`). Passo sem melhora e rejeitado (pose anterior mantida). Devolve (T, historico)."""
@@ -175,22 +218,38 @@ def otimizar_direto(nos, T, pares, odo_idx, ref, iteracoes=14, amostra=12000, si
         for _ in range(tentativas):
             lam = mu * np.maximum(np.diag(H), 1e-9)
             delta = np.linalg.solve(H + np.diag(lam), -b)
-            Tn = [T[k] if k == ref else T[k] @ exp_se3(delta[6 * k:6 * k + 6]) for k in range(n)]
+            Tn = [T[k] if k == ref else T[k] @ exp_se3(delta[6 * k : 6 * k + 6]) for k in range(n)]
             t1 = _termos_pares(P, N, arv, Tn, pares, amostras, tol, c, jacobiano=False)
             custo1 = t1["custo"] + _termos_odometria(Tn, odo_idx, sigma_odo, alavanca)
             if custo1 <= custo0:
                 aceito = True
-                passo = max((float(np.linalg.norm(delta[6 * k + 3:6 * k + 6])) for k in range(n) if k != ref), default=0.0)
+                passo = max(
+                    (float(np.linalg.norm(delta[6 * k + 3 : 6 * k + 6])) for k in range(n) if k != ref), default=0.0
+                )
                 T = Tn
                 mu = max(mu / 3.0, 1e-6)
                 break
-            mu = min(mu * 10.0, 1e4)     # teto: rejeicoes seguidas nao podem congelar as iteracoes seguintes
-        hist.append(dict(iteracao=it + 1, tol_mm=tol, tukey_mm=c, custo_antes=custo0, custo_depois=custo1 if aceito else custo0,
-                         aceito=aceito, rms_ponderado_um=t0["rms"] * 1000, n_efetivo=t0["n_efetivo"],
-                         pares_usados=t0["pares_usados"], maior_passo_mm=passo))
-        log(f"  iteracao {it+1}/{iteracoes}: tol {tol:.1f} mm, Tukey {c:.2f} mm | RMS ponderado {t0['rms']*1000:.0f} um "
+            mu = min(mu * 10.0, 1e4)  # teto: rejeicoes seguidas nao podem congelar as iteracoes seguintes
+        hist.append(
+            dict(
+                iteracao=it + 1,
+                tol_mm=tol,
+                tukey_mm=c,
+                custo_antes=custo0,
+                custo_depois=custo1 if aceito else custo0,
+                aceito=aceito,
+                rms_ponderado_um=t0["rms"] * 1000,
+                n_efetivo=t0["n_efetivo"],
+                pares_usados=t0["pares_usados"],
+                maior_passo_mm=passo,
+            )
+        )
+        log(
+            f"  iteracao {it + 1}/{iteracoes}: tol {tol:.1f} mm, Tukey {c:.2f} mm | RMS ponderado {t0['rms'] * 1000:.0f} um "
             f"(n efetivo {t0['n_efetivo']:.0f}) | custo {custo0:.1f} -> {custo1 if aceito else custo0:.1f} "
-            f"{'ACEITO' if aceito else 'REJEITADO (pose mantida)'} | maior passo {passo:.3f} mm", flush=True)
+            f"{'ACEITO' if aceito else 'REJEITADO (pose mantida)'} | maior passo {passo:.3f} mm",
+            flush=True,
+        )
     return T, hist
 
 
@@ -206,7 +265,7 @@ def condicionamento(nos, T, pares, ref, amostra=4000, tol=1.2):
     for k in range(len(nos)):
         if k == ref:
             continue
-        B = D @ t["H"][6 * k:6 * k + 6, 6 * k:6 * k + 6] @ D
+        B = D @ t["H"][6 * k : 6 * k + 6, 6 * k : 6 * k + 6] @ D
         ev = np.linalg.eigvalsh(B)
         out[k] = float(ev[0] / ev[-1]) if ev[-1] > 0 else 0.0
     return out
@@ -223,10 +282,11 @@ def vies_reservado(nos, Ts, pares, n_max=60, seed=7):
         if k not in cache:
             cache[k] = S._normais(np.load(nos[k]["arquivo"]))
         return cache[k]
+
     res = []
     for T in Ts:
         v = []
-        for (i, j) in sel:
+        for i, j in sel:
             r = S.residuo_plano(nuv(i), nuv(j), np.linalg.inv(T[i]) @ T[j])
             if r[1] is not None:
                 v.append(r[1] * 1000)
@@ -247,19 +307,28 @@ def main():
     ap.add_argument("--tol-fim", type=float, default=1.2)
     ap.add_argument("--amostra", type=int, default=12000)
     ap.add_argument("--tukey", default="auto", help="corte robusto em mm, ou auto = max(0,5; tol/4)")
-    ap.add_argument("--sem-reversao", action="store_true",
-                    help="grava o resultado mesmo se o vies por celula (pares reservados) piorar")
+    ap.add_argument(
+        "--sem-reversao",
+        action="store_true",
+        help="grava o resultado mesmo se o vies por celula (pares reservados) piorar",
+    )
     a = ap.parse_args()
     baixa_prioridade()
     from recursos import orcamento_threads
+
     orcamento_threads(1, teto=4)
     ind = json.load(open(os.path.join(a.pasta, "segmentos_indice.json")))
     pj = json.load(open(a.poses))
-    if "segmentos" in pj:                                         # saida de alinhar_segmentos.py
+    if "segmentos" in pj:  # saida de alinhar_segmentos.py
         T = {(g, s["seg"]): np.array(s["T"]) for g, v in pj["segmentos"].items() for s in v}
         ref_scan = pj["referencia"]
-    else:                                                         # poses iniciais por scan
-        T = {(g, s["seg"]): np.array(pj["poses_iniciais"][g]) for g, v in ind.items() if g in pj["poses_iniciais"] for s in v}
+    else:  # poses iniciais por scan
+        T = {
+            (g, s["seg"]): np.array(pj["poses_iniciais"][g])
+            for g, v in ind.items()
+            if g in pj["poses_iniciais"]
+            for s in v
+        }
         ref_scan = pj["referencia"]
     nos = [s for g in sorted(ind) if (g, 0) in T for s in ind[g]]
     Tn = [T[(s["scan"], s["seg"])].copy() for s in nos]
@@ -267,42 +336,75 @@ def main():
     odo_idx = [(k, k + 1) for k in range(len(nos) - 1) if nos[k]["scan"] == nos[k + 1]["scan"]]
     t0 = time.time()
     pares = S.candidatos(nos, Tn, k_por_no=a.k_por_no, sobreposicao_min=0.15, tol=8.0)
-    print(f"{len(nos)} segmentos, {len(pares)} pares sobrepostos, {len(odo_idx)} elos de odometria ({time.time()-t0:.0f}s)", flush=True)
+    _LOGGER.info(
+        "%s",
+        f"{len(nos)} segmentos, {len(pares)} pares sobrepostos, {len(odo_idx)} elos de odometria ({time.time() - t0:.0f}s)",
+    )
     soltos = conectividade(len(nos), pares, odo_idx, ref)
     if soltos:
-        print(f"AVISO: {len(soltos)} segmento(s) sem ligacao com a referencia (ficam com a pose de entrada): "
-              + ", ".join(f"{nos[k]['scan']}#{nos[k]['seg']}" for k in soltos[:12]), flush=True)
+        _LOGGER.info(
+            "%s",
+            f"AVISO: {len(soltos)} segmento(s) sem ligacao com a referencia (ficam com a pose de entrada): "
+            + ", ".join((f"{nos[k]['scan']}#{nos[k]['seg']}" for k in soltos[:12])),
+        )
     # pares reservados para a avaliacao: metade sorteada fica FORA da otimizacao
     rng = np.random.default_rng(11)
     ordem = rng.permutation(len(pares))
     reserva = [pares[k] for k in ordem[: len(pares) // 5]] if len(pares) >= 20 else list(pares)
-    uso = [pares[k] for k in ordem[len(pares) // 5:]] if len(pares) >= 20 else list(pares)
-    if conectividade(len(nos), uso, odo_idx, ref) != soltos:     # a reserva nao pode desligar o grafo
+    uso = [pares[k] for k in ordem[len(pares) // 5 :]] if len(pares) >= 20 else list(pares)
+    if conectividade(len(nos), uso, odo_idx, ref) != soltos:  # a reserva nao pode desligar o grafo
         uso, reserva = list(pares), list(pares)
     T_ini = [x.copy() for x in Tn]
-    Tn, hist = otimizar_direto(nos, Tn, uso, odo_idx, ref, iteracoes=a.iteracoes, sigma_odo=a.sigma_odo,
-                               tol_ini=a.tol_ini, tol_fim=a.tol_fim, amostra=a.amostra, tukey=a.tukey)
+    Tn, hist = otimizar_direto(
+        nos,
+        Tn,
+        uso,
+        odo_idx,
+        ref,
+        iteracoes=a.iteracoes,
+        sigma_odo=a.sigma_odo,
+        tol_ini=a.tol_ini,
+        tol_fim=a.tol_fim,
+        amostra=a.amostra,
+        tukey=a.tukey,
+    )
     (v_antes, v_depois), n_res = vies_reservado(nos, [T_ini, Tn], reserva)
-    print(f"vies por celula de 30 mm em {n_res} pares reservados: {v_antes} -> {v_depois} um (mediana)", flush=True)
+    _LOGGER.info("%s", f"vies por celula de 30 mm em {n_res} pares reservados: {v_antes} -> {v_depois} um (mediana)")
     revertido = False
     if v_antes is not None and v_depois is not None and v_depois > v_antes and not a.sem_reversao:
-        print("PIOROU nos pares reservados: poses de entrada mantidas (use --sem-reversao para gravar mesmo assim)", flush=True)
+        _LOGGER.info(
+            "%s", "PIOROU nos pares reservados: poses de entrada mantidas (use --sem-reversao para gravar mesmo assim)"
+        )
         Tn, revertido = T_ini, True
     cond = condicionamento(nos, Tn, pares, ref) if pares else {}
     fracos = sorted(cond, key=cond.get)[:5]
     if fracos:
-        print("direcoes menos observadas (razao autovalores; ~0 = desliza): "
-              + ", ".join(f"{nos[k]['scan'][-6:]}#{nos[k]['seg']} {cond[k]:.1e}" for k in fracos), flush=True)
+        _LOGGER.info(
+            "%s",
+            "direcoes menos observadas (razao autovalores; ~0 = desliza): "
+            + ", ".join((f"{nos[k]['scan'][-6:]}#{nos[k]['seg']} {cond[k]:.1e}" for k in fracos)),
+        )
     saida = {}
     for k, s in enumerate(nos):
         saida.setdefault(s["scan"], []).append(dict(k0=s["k0"], k1=s["k1"], seg=s["seg"], T=Tn[k].tolist()))
-    json.dump(dict(referencia=ref_scan, segmentos=saida,
-                   avaliacao=dict(vies_reservado_antes_um=v_antes, vies_reservado_depois_um=v_depois, pares_reservados=n_res,
-                                  revertido=revertido, segmentos_sem_ligacao=[f"{nos[k]['scan']}#{nos[k]['seg']}" for k in soltos],
-                                  condicionamento={f"{nos[k]['scan']}#{nos[k]['seg']}": v for k, v in cond.items()},
-                                  historico=hist)),
-              open(a.saida, "w"), indent=1)
-    print("gravado", a.saida, f"({time.time()-t0:.0f}s)", flush=True)
+    json.dump(
+        dict(
+            referencia=ref_scan,
+            segmentos=saida,
+            avaliacao=dict(
+                vies_reservado_antes_um=v_antes,
+                vies_reservado_depois_um=v_depois,
+                pares_reservados=n_res,
+                revertido=revertido,
+                segmentos_sem_ligacao=[f"{nos[k]['scan']}#{nos[k]['seg']}" for k in soltos],
+                condicionamento={f"{nos[k]['scan']}#{nos[k]['seg']}": v for k, v in cond.items()},
+                historico=hist,
+            ),
+        ),
+        open(a.saida, "w"),
+        indent=1,
+    )
+    _LOGGER.info("%s %s %s", "gravado", a.saida, f"({time.time() - t0:.0f}s)")
 
 
 if __name__ == "__main__":
