@@ -108,6 +108,18 @@ def revox_do_scan(guid):
     raise FileNotFoundError(f"scan {guid} nao esta na biblioteca do Revo")
 
 
+GRUPOS_CFG = os.path.expandvars(r"%LOCALAPPDATA%\Revopoint\RevoScan6\config\group.cfg")
+
+
+def revox_no_grupo(grupo, nome):
+    """Caminho do .revox `nome` dentro do `grupo` da biblioteca (group.cfg: {"group": {nome: [revox...]}})."""
+    cfg = json.load(open(GRUPOS_CFG, encoding="utf-8"))
+    for c in cfg.get("group", {}).get(grupo, []):
+        if os.path.basename(c)[:-6] == nome and os.path.exists(c):
+            return c
+    raise FileNotFoundError(f"{nome} nao esta no grupo {grupo!r}")
+
+
 def pasta_mais_recente(guid):
     """Pasta da biblioteca com o .revox mais novo para `guid` (a importacao mais recente)."""
     achados = [os.path.join(BIBLIOTECA, d) for d in os.listdir(BIBLIOTECA)
@@ -281,6 +293,94 @@ class RevoUI:
                 raise RuntimeError("Revo esta em portugues; feche-o e deixe a automacao inicia-lo (LANG=en_US)")
             raise
 
+    def novo_grupo(self, nome, timeout=20):
+        """Regra do usuario: cada projeto importado vai para um GRUPO NOVO da biblioteca (+ New Group ->
+        nome -> Confirm -> clicar no grupo). Assim nomes de scan repetidos de outras importacoes nao se misturam."""
+        self.biblioteca()
+        self.limpar_busca()
+        self._botao("New Group").click_input()
+        edit = None
+        t0 = time.time()
+        while edit is None and time.time() - t0 < timeout:
+            for d in self.principal.descendants(control_type="Edit"):
+                if d.is_visible() and d.window_text() == "Untitled":
+                    edit = d
+            time.sleep(0.5)
+        if edit is None:
+            raise RuntimeError("dialogo New Group nao apareceu")
+        edit.set_edit_text(nome)
+        time.sleep(0.5)
+        self._botao("Confirm").click_input()
+        # GroupListView virtualiza os itens fora da tela. O grupo novo pode
+        # existir no modelo sem aparecer na arvore de acessibilidade.
+        for lista in self.principal.descendants(control_type="List"):
+            if lista.element_info.automation_id.endswith(".GroupListView"):
+                from pywinauto.keyboard import send_keys
+                lista.click_input()
+                send_keys("{END}")
+                break
+        self._esperar(lambda: any(d.window_text() == nome for d in self.principal.descendants(control_type="ListItem")),
+                      timeout, 0.5, f"grupo {nome!r} nao apareceu")
+        # A lista se reorganiza depois de criar o grupo; um clique unico pode
+        # atingir outro item. Reusar a selecao com verificacao pelo log.
+        if self.grupo_atual()!=nome:
+            self.entrar_grupo(nome, timeout=timeout)
+        self._esperar(lambda: self._contagem() == 0, timeout, 0.5, f"grupo {nome!r} nao abriu vazio")
+
+    def grupos(self):
+        """Nomes dos grupos da biblioteca (coluna da esquerda). Nao usa o mouse."""
+        return [d.window_text() for d in self.principal.descendants(control_type="ListItem")
+                if d.window_text() not in ("false", "true") and d.is_visible()]
+
+    def limpar_busca(self):
+        """Esvazia a caixa 'Search Scan Files'. O Revo GUARDA o texto da busca entre sessoes: depois de reiniciar,
+        o grupo mostraria so o scan pesquisado antes (observado pelo usuario)."""
+        for d in self.principal.descendants(control_type="Edit"):
+            if d.is_visible() and d.rectangle().top < self.principal.rectangle().top + 400:
+                if d.window_text():
+                    d.set_edit_text("")
+                    time.sleep(1)
+                return
+
+    @staticmethod
+    def grupo_atual():
+        """Grupo selecionado na biblioteca, pela ultima linha 'slotCurrentGroupChanged ... curName=' do log."""
+        try:
+            with open(LOG, "rb") as f:
+                f.seek(max(0, os.path.getsize(LOG) - 4_000_000))
+                txt = f.read().decode("utf-8", "replace")
+        except OSError:
+            return None
+        m = re.findall(r"slotCurrentGroupChanged,curRow=\d+,curName=(.*?),previous", txt)
+        return m[-1] if m else None
+
+    def entrar_grupo(self, nome, timeout=20, tentativas=4):
+        """Clica no grupo da biblioteca (o Revo sai do grupo quando reinicia) e confere pelo log que ficou nele:
+        logo apos reiniciar, a lista de grupos ainda se reorganiza e o clique pode cair em outro grupo
+        (Projeto 9: clicou Projeto9_v3 e 0,2 s depois o Revo trocou para 'peca_limpa')."""
+        self.biblioteca()
+        self.limpar_busca()
+        for _ in range(tentativas):
+            time.sleep(2)                          # deixa a lista assentar
+            item = next((d for d in self.principal.descendants(control_type="ListItem") if d.window_text() == nome), None)
+            if item is None:
+                raise LookupError(f"grupo {nome!r} nao existe; grupos: {self.grupos()}")
+            try:
+                item.iface_selection_item.Select()
+            except Exception:
+                item.click_input()
+            time.sleep(2)
+            if self.grupo_atual() == nome:
+                return
+        raise RuntimeError(f"nao consegui ficar no grupo {nome!r} (atual: {self.grupo_atual()!r})")
+
+    def captura(self, arquivo):
+        """Salva a imagem da janela do Revo (para conferir o estado sem perguntar ao usuario)."""
+        from PIL import ImageGrab
+        r = self.principal.rectangle()
+        ImageGrab.grab(bbox=(r.left, r.top, r.right, r.bottom), all_screens=True).save(arquivo)
+        return arquivo
+
     def _contagem(self):
         for d in self.principal.descendants(control_type="Text"):
             if d.window_text().startswith("Scan(") and d.is_visible():
@@ -344,20 +444,34 @@ class RevoUI:
         time.sleep(3)                      # o Revo ainda grava miniatura/indice depois de criar a pasta
         return novos()
 
-    def abrir_scan(self, nome, pasta=None, timeout=1200):
+    def abrir_scan(self, nome, pasta=None, timeout=1200, grupo=None):
         """Filtra a biblioteca pelo nome (caixa de busca) e abre o primeiro cartao (duplo clique).
         Os cartoes sao desenhados sem texto na arvore UIA, entao a busca e o caminho confiavel.
-        Com `pasta` (a que `carregar_projeto` devolveu), confere pelo log do Revo que foi essa que abriu."""
-        self.biblioteca()
+        Com `pasta` (a que `carregar_projeto` devolveu), confere pelo log do Revo que foi essa que abriu.
+        Com `grupo`, entra nele antes (nomes de scan se repetem entre importacoes)."""
+        if grupo:
+            self.entrar_grupo(grupo)               # ja limpa a busca antes de clicar no grupo
+        else:
+            self.biblioteca()
+            self.limpar_busca()
         caixa = next(d for d in self.principal.descendants(control_type="Edit") if d.is_visible())
-        caixa.set_edit_text("")
         caixa.set_edit_text(nome)
         # sem esperar o filtro, o duplo clique cai no 1o cartao da lista inteira (scan errado)
         self._esperar(lambda: self._contagem() >= 1, 30, 0.5, f"busca por {nome!r} nao achou cartao")
         time.sleep(2)
+        if grupo and self.grupo_atual() != grupo:
+            raise RuntimeError(f"saiu do grupo {grupo!r} antes de abrir (atual: {self.grupo_atual()!r})")
         log = LogRevo()
-        r = self.principal.rectangle()
-        mouse.double_click(coords=(r.left + 580, r.top + 420))                 # miniatura do 1o cartao
+        # 1o cartao da grade (ListItem com a miniatura); a posicao fixa antiga dependia do tamanho da janela
+        cartoes = [d for d in self.principal.descendants(control_type="ListItem")
+                   if d.is_visible() and d.window_text() in ("false", "true")]
+        if cartoes:
+            c = min(cartoes, key=lambda d: (d.rectangle().top, d.rectangle().left)).rectangle()
+            alvo = ((c.left + c.right) // 2, c.top + (c.bottom - c.top) // 3)
+        else:
+            r = self.principal.rectangle()
+            alvo = (r.left + 580, r.top + 420)
+        mouse.double_click(coords=alvo)                                         # miniatura do 1o cartao
         aberto = log.esperar(r"Project opened:(.+?\.revox)", timeout, "scan nao abriu").group(1)
         if pasta and os.path.normcase(os.path.dirname(aberto)) != os.path.normcase(os.path.abspath(pasta)):
             raise RuntimeError(f"abriu {aberto}, esperava a pasta {pasta}")
@@ -415,7 +529,10 @@ class RevoUI:
         self._apply_do_painel("Fusion")
         usado = log.esperar(r"point cloud fuse with pointPitch: ([\d.]+)", 30, "fusao nao comecou")
         fim = log.esperar(r"point cloud fuse end, duration: (\d+)", timeout, "fusao nao terminou")
-        return {"ponto_mm": float(usado.group(1)), "ms": int(fim.group(1))}
+        linha=usado.string[usado.start():].splitlines()[0]
+        otim=re.search(r"optimizePose:\s*(\d+)",linha)
+        return {"ponto_mm": float(usado.group(1)), "ms": int(fim.group(1)),
+                "otimizar_poses":int(otim.group(1)) if otim else None}
 
     def malha(self, timeout=3600):
         """Edit > Meshing > Apply com o modo/valores que o painel mostra (veja `parametros`)."""

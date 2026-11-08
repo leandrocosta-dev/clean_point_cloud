@@ -1,0 +1,4 @@
+# Runtime CUDA local ao ambiente Python; driver NVIDIA compativel necessario.
+# Instalar: .venv\Scripts\python.exe -m pip install -r requirements-cuda.txt
+cupy-cuda12x[ctk]==14.2.0
+cuda-toolkit==12.9.2.0

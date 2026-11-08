@@ -49,8 +49,42 @@ def amostra_mundo(scan, passo_quadro, passo_pixel):
     return np.vstack([scan.pontos(k, passo=passo_pixel)[0].astype(np.float32) for k in ks[::passo_quadro]])
 
 
+def _area_plano(P, n, d, thr=2.0, celula=2.0):
+    """Area (mm2) ocupada pelos pontos a menos de thr do plano, em celulas de celula mm."""
+    Q = P[np.abs(P @ n + d) < thr]
+    if len(Q) == 0:
+        return 0.0
+    u = np.cross(n, [1.0, 0, 0] if abs(n[0]) < 0.9 else [0, 1.0, 0]); u /= np.linalg.norm(u); v = np.cross(n, u)
+    c = np.floor(np.c_[Q @ u, Q @ v] / celula).astype(np.int64)
+    return float(len(np.unique(c, axis=0))) * celula * celula
+
+
+def escolher_plano(S, a, log):
+    """'dominante': plano com mais pontos. 'extenso': entre os 4 maiores planos (RANSAC sequencial),
+    o de maior AREA ocupada: a placa e larga e esparsa; a face plana de uma peca pequena tem muitos
+    pontos mas pouca area e engana o criterio dominante."""
+    if a.plano == "dominante":
+        return plano_ransac(S, thr=2.0, it=2000)
+    resto, cands = S, []
+    for i in range(4):
+        if len(resto) < 1000:
+            break
+        n, d, _ = plano_ransac(resto, thr=2.0, it=2000, seed=i)
+        n = n / np.linalg.norm(n)
+        frac = float((np.abs(S @ n + d) < 2.0).mean())
+        cands.append((_area_plano(S, n, d), n, d, frac))
+        resto = resto[np.abs(resto @ n + d) >= 2.0]
+    log("   planos candidatos (area mm2 / % pontos): " + ", ".join(f"{c[0]:.0f}/{c[3] * 100:.0f}%" for c in cands))
+    _, n, d, frac = max(cands, key=lambda c: c[0])
+    # orienta a normal para o lado onde estao os objetos (como plano_ransac)
+    h = S @ n + d
+    if np.mean(h > 6.0) < np.mean(h < -6.0):
+        n, d = -n, -d
+    return n, d, frac
+
+
 def construir_regiao(A, a, log):
-    n, d, frac = plano_ransac(A[:: max(1, len(A) // 150000)].astype(float), thr=2.0, it=2000)
+    n, d, frac = escolher_plano(A[:: max(1, len(A) // 150000)].astype(float), a, log)
     n = n / np.linalg.norm(n)
     h = A @ n + d
     log(f"   placa: {frac * 100:.0f}% da amostra no plano (normal {np.round(n, 3).tolist()}); "
@@ -138,6 +172,9 @@ def main():
     ap.add_argument("--amostra-quadros", type=int, default=2, help="usa 1 a cada N quadros para achar a peca")
     ap.add_argument("--amostra-passo", type=int, default=8, help="usa 1 a cada N pixels por quadro para achar a peca")
     ap.add_argument("--sem-pixels", action="store_true", help="nao filtra pixels voadores nem manchas 2D")
+    ap.add_argument("--plano", choices=["dominante", "extenso"], default="dominante",
+                    help="como achar a placa: plano com mais pontos, ou o de maior area entre 4 candidatos "
+                         "(use 'extenso' quando a peca tem face plana grande e o plano dominante cai nela)")
     ap.add_argument("--diagnostico", help="pasta onde gravar a imagem antes/depois (fora da entrega)")
     a = ap.parse_args()
     baixa_prioridade()
