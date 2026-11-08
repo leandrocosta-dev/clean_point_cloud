@@ -36,12 +36,42 @@ from alinhar_varios import baixa_prioridade  # noqa: E402
 from revo_projeto import RevoScan  # noqa: E402
 
 WORKERS = 8
+MOTOR = "cpu"                   # "cuda": vizinhos por raio e agrupamentos na GPU (vizinhos_gpu.py)
 reg = o3d.pipelines.registration
+_GRADES = {}
+
+
+def _grade(F, raio):
+    """Grade GPU reaproveitada enquanto F (mesmo objeto) e o raio nao mudam (a grade fina F do mean-shift)."""
+    from vizinhos_gpu import Grade
+    chave = (id(F), len(F), float(raio))
+    if chave not in _GRADES:
+        _GRADES.clear()
+        _GRADES[chave] = Grade(F, raio)
+    return _GRADES[chave]
 
 
 def grupos(chaves):
+    if MOTOR == "cuda":
+        # chave empacotada em int64: monotona na ordem lexicografica (x, y, z), entao inverso e contagens sao
+        # IDENTICOS aos de np.unique(axis=0) do caminho CPU
+        import cupy as cp
+        k = cp.asarray(chaves)
+        k = k - k.min(0)
+        d = (k.max(0) + 1).astype(cp.int64)
+        p = (k[:, 0] * d[1] + k[:, 1]) * d[2] + k[:, 2]
+        _, inv, n = cp.unique(p, return_inverse=True, return_counts=True)
+        return cp.asnumpy(inv).ravel(), cp.asnumpy(n)
     _, inv, n = np.unique(chaves, axis=0, return_inverse=True, return_counts=True)
     return inv.ravel(), n
+
+
+def mais_proximo(C, X, raio):
+    """(d, idx) do vizinho mais proximo de cada X em C. CPU: exato sem limite; cuda: so ate `raio`
+    (alem disso d=inf e idx=-1; quem chama so usa d < raio)."""
+    if MOTOR == "cuda":
+        return _grade(C, raio).mais_proximo(X)
+    return cKDTree(C).query(X, workers=WORKERS)
 
 
 def centroides(X, voxel, w=None, min_obs=1):
@@ -61,6 +91,12 @@ def vizinhos(arv, Q, k, raio):
 
 def normais_locais(C, ref, k=40, raio=0.5, sigma=0.25, bloco=200000):
     """PCA ponderado por gaussiana; devolve normal e razao menor/maior autovalor do plano local."""
+    if MOTOR == "cuda":                                          # todos do raio (CPU: os k mais proximos no raio)
+        from vizinhos_gpu import Grade
+        _, M, _ = Grade(C, raio).pca(C, sigma)
+        _, U = np.linalg.eigh(M)
+        N = U[:, :, 0]
+        return N * np.sign(np.sum(N * ref, 1, keepdims=True) + 1e-12)
     arv = cKDTree(C)
     N = np.zeros_like(C)
     for a in range(0, len(C), bloco):
@@ -106,13 +142,22 @@ def icp_multivista(nuv, T):
 
 
 def sem_soltos(C, ref, viz_min, raio=0.3):
-    n = np.array(cKDTree(C).query_ball_point(C, raio, workers=WORKERS, return_length=True))
+    if MOTOR == "cuda":
+        from vizinhos_gpu import Grade
+        n = Grade(C, raio).contar(C)
+    else:
+        n = np.array(cKDTree(C).query_ball_point(C, raio, workers=WORKERS, return_length=True))
     ok = n > viz_min
     return C[ok], ref[ok], int((~ok).sum())
 
 
 def espessura_local(C, raio, k=80, bloco=100000):
     """RMS (mm) do plano local e numero de vizinhos: superficie = fina; nuvem de multipercurso = grossa."""
+    if MOTOR == "cuda":                                          # todos do raio (CPU: ate k=80 no raio)
+        from vizinhos_gpu import Grade
+        s0, M, _ = Grade(C, raio).pca(C, None)
+        soma = np.maximum(s0, 1)
+        return np.sqrt(np.maximum(np.linalg.eigvalsh(M)[:, 0], 0) / soma), s0.astype(int)
     arv = cKDTree(C)
     e, nv = np.zeros(len(C)), np.zeros(len(C), int)
     for a in range(0, len(C), bloco):
@@ -130,6 +175,9 @@ def espessura_local(C, raio, k=80, bloco=100000):
 
 def mean_shift(S, N, F, W, VF, sigma_t, sigma_h, raio=0.35, k=200, max_passo=0.1, bloco=50000):
     """Leva cada amostra S ao longo da normal N ate a moda de altura da grade fina F (pesos W, visada VF)."""
+    if MOTOR == "cuda":                                          # todos do raio (CPU: os k=200 mais proximos)
+        D = _grade(F, raio).mean_shift(S, N, W, VF, sigma_t, sigma_h, max_passo)
+        return S + D[:, None] * N, D
     arv = cKDTree(F)
     D = np.zeros(len(S))
     for a in range(0, len(S), bloco):
@@ -163,9 +211,27 @@ def main():
     ap.add_argument("--raio-fraco", type=float, default=0.3)
     ap.add_argument("--scans-fraco", type=int, default=2)
     ap.add_argument("--comp-min", type=float, default=0.002)
+    ap.add_argument("--motor", choices=["cpu", "cuda"], default="cpu",
+                    help="cuda: vizinhos por raio e agrupamentos na GPU (todos do raio; CPU usa os k mais proximos)")
     a = ap.parse_args()
+    global MOTOR, WORKERS
     baixa_prioridade()
+    from recursos import orcamento_threads
+    _, WORKERS = orcamento_threads(1)
+    if a.motor == "cuda":
+        from vizinhos_gpu import disponivel
+        if not disponivel():
+            sys.exit("--motor cuda pedido, mas CuPy/GPU CUDA indisponivel")
+    MOTOR = a.motor
     t0 = time.time()
+    tempos = {}
+    marca = [time.time()]
+
+    def etapa(nome):
+        agora = time.time()
+        tempos[nome] = round(agora - marca[0], 2)
+        marca[0] = agora
+        print(f"[{nome}: {tempos[nome]:.1f} s]", flush=True)
     if os.path.exists(a.saida) and os.listdir(a.saida):
         sys.exit(f"destino ja existe: {a.saida}")
     os.makedirs(a.saida, exist_ok=True)
@@ -189,6 +255,7 @@ def main():
         dados = {g: carregar(os.path.join(a.projeto, "data", g), tmp, K) for g in poses0}
     rel["quadros"] = {g: d[2] for g, d in dados.items()}
     rel["pontos_entrada"] = {g: len(d[0]) for g, d in dados.items()}
+    etapa("leitura_e_calibracao")
 
     nuv = {}
     for g, (X, _, _) in dados.items():
@@ -196,6 +263,7 @@ def main():
         p.estimate_normals(o3d.geometry.KDTreeSearchParamHybrid(radius=0.8, max_nn=40))
         nuv[g] = p
     T = icp_multivista(nuv, {g: x.copy() for g, x in poses0.items()})
+    etapa("icp_multivista")
     json.dump({g: x.tolist() for g, x in T.items()}, open(os.path.join(a.saida, "poses_finais.json"), "w"), indent=1)
     for g, x in T.items():
         D = np.linalg.inv(poses0[g]) @ x
@@ -213,13 +281,18 @@ def main():
     inv_todos, n_todos = grupos(np.floor(X / 0.2).astype(np.int64))
     v_med = np.stack([np.bincount(inv_todos, V[:, i], len(n_todos)) for i in range(3)], 1)[n_todos >= 3]
     N0 = normais_locais(C0, v_med)
-    arv = cKDTree(C0)
-    dist, idx = arv.query(X, workers=WORKERS)
+    dist, idx = mais_proximo(C0, X, 0.4)
     if idx.max() >= len(C0):
         raise RuntimeError("cKDTree devolveu indice invalido")
+    sem = idx < 0                                    # so no motor cuda: sem centroide a < 0,4 mm
+    idx = np.maximum(idx, 0)
     N_obs = N0[idx]
     cosv = np.sum(N_obs * V, 1)
     h = np.sum((X - C0[idx]) * N_obs, 1)
+    if sem.any():                                    # contam como fora do plano (nunca entram em ok)
+        cosv[sem] = 1.0
+        h[sem] = np.inf
+        rel["obs_sem_vizinho_04mm"] = int(sem.sum())
     plano_ok = (dist < 0.4) & (np.abs(h) <= a.dist_max)
     ok = plano_ok & (cosv >= a.cos_min)
     rel["obs_boas"] = float(ok.mean())
@@ -243,6 +316,7 @@ def main():
     rel["amostras_iniciais"] = len(S)
     rel["obs_por_voxel_mediana"] = float(np.median(n))
     print("grade fina", len(F), "| amostras", len(S), "| obs/voxel", np.median(n), flush=True)
+    etapa("superficie_grossa_e_grades")
     S, ref, soltos = sem_soltos(S, ref, a.viz_min)     # grade mais densa: so tira o que esta realmente solto
     rel["soltos_removidos"] = soltos
     print("soltos removidos", soltos, flush=True)
@@ -253,6 +327,8 @@ def main():
         rel[f"desloc_h{sig_h}_um"] = dict(mediana=float(np.median(np.abs(D)) * 1000), p99=float(np.percentile(np.abs(D), 99) * 1000))
         print("mean-shift", sig_h, rel[f"desloc_h{sig_h}_um"], flush=True)
     del F, VF, W
+    _GRADES.clear()
+    etapa("mean_shift_5_passadas")
 
     # uma amostra por voxel: as camadas colapsadas caem no mesmo voxel
     inv_, nn = grupos(np.floor(S / a.voxel_saida).astype(np.int64))
@@ -269,9 +345,10 @@ def main():
     C, ref = C[fina], ref[fina]
     C, ref, soltos = sem_soltos(C, ref, 12)
     rel["soltos_removidos_fim2"] = soltos
+    etapa("colapso_espessura_soltos")
 
     # apoio fraco: confirmado por >= scans-fraco scans e longe da superficie principal
-    d_princ = cKDTree(C).query(X, workers=WORKERS)[0]
+    d_princ = mais_proximo(C, X, a.raio_fraco)[0]     # so importa d > raio_fraco
     fracos = np.flatnonzero((d_princ > a.raio_fraco) & (np.abs(h) <= 1.0))
     if len(fracos):
         qf = np.floor(X[fracos] / a.voxel_fraco).astype(np.int64)
@@ -298,6 +375,7 @@ def main():
         print("apoio fraco", rel["apoio_fraco"], flush=True)
         C, ref = np.vstack([C, Cf]), np.vstack([ref, Vf])
     del X, V
+    etapa("apoio_fraco")
     N = normais_locais(C, ref, k=48, raio=0.5, sigma=0.22)
 
     # componentes soltos (grade de 0,5 mm)
@@ -316,6 +394,10 @@ def main():
     p.normals = o3d.utility.Vector3dVector(N)
     o3d.io.write_point_cloud(os.path.join(a.saida, "nuvem_nitida.ply"), p, write_ascii=False)
     rel["pontos_saida"] = len(C)
+    etapa("normais_componentes_gravacao")
+    rel["motor"] = MOTOR
+    rel["threads_cpu"] = WORKERS
+    rel["tempos_s"] = tempos
     rel["segundos"] = round(time.time() - t0)
     json.dump(rel, open(os.path.join(a.saida, "relatorio.json"), "w"), indent=1, default=float)
     print("pontos saida", len(C), "| extensao", np.round(np.ptp(C, axis=0), 2), "|", rel["segundos"], "s", flush=True)
