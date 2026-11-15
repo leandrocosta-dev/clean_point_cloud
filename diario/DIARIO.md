@@ -303,3 +303,8 @@ Objetivo do usuario: um pára-choque COMPLETO fundido e alinhado, para engenhari
 - `atlas_partes.py` sozinho (limpeza por regioes) foi reprovado no scan 093808: aletas deformadas na fusao do Revo. O defeito ja estava nos quadros (176 quadros, pouca cobertura); a fusao de 08/11 do mesmo scan tinha os mesmos pontos (93,6% a < 0,05 mm). Acordo de pixels com a v5 nao mede qualidade de fusao.
 - Usuario: descartar scan ruim; o sistema deve fundir, unir, analisar e voltar para tirar o trecho defeituoso que outro scan cobre melhor. `ciclo_uniao.py` + `fluxo_uniao.py` fazem isso; 1a uniao (7 scans) = "90% limpo", com ilha de suporte no meio; com visibilidade + bloco de um scan so + soltos na uniao = "Perfeito" (fusao 0,10 mm, 434.381 pontos).
 - Numeros, regras e limites: GUIA_PIPELINE, secoes "Atlas de partes", "Ciclo fusao -> uniao" e "Receita E". Nao testado em peca grande nem em outro projeto.
+
+## 2026-11-15: confianca e tempo da Receita E (pedido: analisar gargalos e implementar as melhorias)
+- Perfil do ciclo: 76% do tempo numa analise repetida (25 chamadas). Com memoria por par de scans (`Consenso`) o ciclo caiu de 220 para 112 s e o fluxo de 362 para 224 s, com corte identico.
+- Novo `conferir_uniao.py` mede a fusao final do Revo e a malha; a fusao aprovada passa (0,37% sem apoio, 1 componente) e a malha do Revo reprova por 4 componentes soltos (4.910 triangulos).
+- Duvida decidida pelo consenso, vies de pose por celula, motivo do descarte, aviso de VRAM, tolerancias pelo ruido e `--revo-grupo` (importa, funde e confere). Numeros e limites: GUIA_PIPELINE, "Receita E", item MELHORIAS DE CONFIANCA.
