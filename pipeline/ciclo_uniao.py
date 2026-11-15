@@ -157,6 +157,12 @@ class Consenso:
                     velho[sel] = novo
         return int(sai.sum())
 
+    def mover(self, t):
+        """Os pontos de `t` mudaram de lugar (pose refinada): esquece tudo o que foi calculado com ele."""
+        self._atual.pop(t, None)
+        self._ind = {k: v for k, v in self._ind.items() if k[0] != t}
+        self._par = {k: v for k, v in self._par.items() if t not in k}
+
     def descartar(self, t):
         """Scan sai inteiro: deixa de ser analisado e de votar."""
         self.sup.pop(t, None)
@@ -241,10 +247,12 @@ def escolher_descarte(pct, minimo, fator):
     return pior, resto
 
 
-def ruido_entre_scans(an, vivos):
-    """Mediana e p90 de |desvio| nos pontos com consenso de todos os scans juntos (mm)."""
+def ruido_entre_scans(an, vivos, par=False):
+    """Mediana e p90 de |desvio| nos pontos com consenso de todos os scans juntos (mm). `par` (so 2 scans, sem
+    maioria): nos pontos que o outro scan cobre; ai o numero mistura ruido com erro de pose."""
     m = gpu.xp()
-    ad = m.concatenate([m.abs(x["desvio"][x["consenso"] & vivos[s]]) for s, x in an.items()])
+    chave = (lambda x: x["n_cobrem"] > 0) if par else (lambda x: x["consenso"])
+    ad = m.concatenate([m.abs(x["desvio"][chave(x) & vivos[s]]) for s, x in an.items()])
     if not len(ad):
         return None
     return dict(p50_mm=round(float(m.percentile(ad, 50)), 4), p90_mm=round(float(m.percentile(ad, 90)), 4))
@@ -325,6 +333,13 @@ def resumo(an, vivos, a):
             desvio_p90_mm=round(float(m.percentile(ad, 90)), 4) if len(ad) else None,
             acima_tol_pct=round(100 * float((ad > a.tol).mean()), 3) if len(ad) else None,
             sem_maioria=int(((x["n_cobrem"] > 0) & ~x["consenso"] & v).sum()),
+        )
+        cob = (x["n_cobrem"] > 0) & v  # medida do encaixe mesmo sem maioria (2 scans)
+        ac = m.abs(x["desvio"][cob])
+        r[s].update(
+            coberto_por_outro_pct=round(100 * float(cob.sum()) / max(int(v.sum()), 1), 2),
+            desvio_coberto_p50_mm=round(float(m.percentile(ac, 50)), 4) if len(ac) else None,
+            desvio_coberto_p90_mm=round(float(m.percentile(ac, 90)), 4) if len(ac) else None,
         )
     return r
 
@@ -538,8 +553,10 @@ def main(argv=None):
         poses = {k: np.asarray(v, float) for k, v in json.load(fh).items()}
     _, _, todos = AP.scans_do_projeto(proj)
     scans = [s for s in todos if s in poses and (not a.scans or s in a.scans)]
-    if len(scans) < 3:
-        sys.exit("preciso de pelo menos 3 scans com pose para haver maioria")
+    if len(scans) < 2:
+        sys.exit("preciso de pelo menos 2 scans com pose")
+    if len(scans) == 2:
+        _LOG.info("so 2 scans: nao ha maioria, nada e cortado por consenso; ficam a medida do par, os soltos e a uniao")
     t0 = time.time()
     sup = fundir_todos(proj, scans, poses, a, a.fusoes)
     _LOG.info(
@@ -576,15 +593,18 @@ def main(argv=None):
     scans = [s for s in scans if s in sup]
     if a.so_triagem:  # so decide quais scans saem inteiros (para as etapas anteriores do fluxo nao usarem o scan ruim)
         salvar_json_atomico(os.path.join(saida, "descartados.json"), descartados)
-        if len(sup) >= 3:
-            salvar_json_atomico(
-                os.path.join(saida, "triagem.json"),
-                dict(descartados=descartados, ruido_entre_scans=ruido_entre_scans(con.analisar(), con.vivos)),
-            )
+        salvar_json_atomico(
+            os.path.join(saida, "triagem.json"),
+            dict(
+                descartados=descartados,
+                ruido_entre_scans=ruido_entre_scans(con.analisar(), con.vivos, len(sup) == 2),
+            ),
+        )
         _LOG.info("triagem: %d scan(s) descartado(s): %s", len(descartados), sorted(descartados))
         return 0
-    if len(sup) < 3:
-        sys.exit("sobraram menos de 3 scans depois dos descartes")
+    if len(sup) < 2:
+        sys.exit("sobrou menos de 2 scans depois dos descartes")
+    par = len(sup) == 2  # sem maioria: as medidas usam o que o OUTRO scan cobre, sem decidir quem esta certo
     vivos = con.vivos  # o Consenso e o dono das mascaras: toda remocao passa por con.remover
     removido = {s: m.zeros(len(x["P"]), bool) for s, x in sup.items()}
 
@@ -622,13 +642,18 @@ def main(argv=None):
         del supA
     an = con.analisar()
     antes, an0 = resumo(an, vivos, a), an
-    ruido = ruido_entre_scans(an, vivos)
+    ruido = ruido_entre_scans(an, vivos, par)
     # pose: vies com sinal por celula (desvio pequeno e sistematico nao vira "defeito", vira borrao na fusao)
     todos_p = m.concatenate([x["P"] for x in sup.values()])
     ext = float(gpu.para_cpu(todos_p.max(0) - todos_p.min(0)).max())
     del todos_p
     cel = a.vies_celula or min(30.0, max(ext / 3.0, 5.0))
-    vies = {s: vies_por_celula(sup[s]["P"], an[s]["desvio"], an[s]["consenso"] & vivos[s], cel) for s in sup}
+    vies = {
+        s: vies_por_celula(
+            sup[s]["P"], an[s]["desvio"], ((an[s]["n_cobrem"] > 0) if par else an[s]["consenso"]) & vivos[s], cel
+        )
+        for s in sup
+    }
     pose_vies = sorted(s for s, v in vies.items() if v.get("celulas") and v["vies_abs_max_mm"] > a.vies_max)
     for s in pose_vies:
         _LOG.info(

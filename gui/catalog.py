@@ -120,6 +120,7 @@ CATEGORIAS = [
             "atlas_partes.py": "Atlas de partes para a LLM (regiões, imagens com ids, rótulos)",
             "fluxo_uniao.py": "FLUXO COMPLETO: bruto + poses → limpar, descartar scan ruim, corrigir, scan unido",
             "ciclo_uniao.py": "Ciclo fusão → união → análise: tira o trecho defeituoso que outro scan cobre melhor",
+            "refinar_poses.py": "Refina poses já alinhadas usando só superfície de mesma face (parede fina, frente × verso)",
             "conferir_uniao.py": "Confere a fusão final e a malha do scan unido: apoio por scan, soltos, zonas fracas, furos",
             "regressao.py": "Banco de regressão",
             "metrica_malha.py": "Métricas de malha",

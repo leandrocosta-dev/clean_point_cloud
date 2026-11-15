@@ -1,6 +1,7 @@
 """Modelos de fluxo (secao 2 do GUIA_PIPELINE.md) montados com o contexto atual."""
 
 import os
+import time
 
 from gui.catalog import PIPE
 from gui.core import substituir
@@ -206,24 +207,86 @@ def receita_d(app):
     ]
 
 
+def _scans_do_projeto(projeto):
+    """Scans (nao os quadros avulsos `Frame*`) com frames.dataset na pasta do projeto."""
+    data = os.path.join(projeto, "data")
+    if not os.path.isdir(data):
+        return []
+    return sorted(
+        d
+        for d in os.listdir(data)
+        if not d.startswith("Frame") and os.path.exists(os.path.join(data, d, "cache", "frames.dataset"))
+    )
+
+
 def receita_e(app):
-    r"""Varios scans da mesma peca COM poses (Merge Alignment do Revo ou alinhar_varios): limpa por regioes, descarta
-    scan ruim, tira o que outros scans viram atraves e o trecho fora do consenso, e grava o scan unido para fundir.
-    Aprovada no Projeto 9 em 2026-11-15. O poses.json ({guid: 4x4}) deve estar em {TRABALHO}\{NOME}_poses.json."""
-    return [
-        _job(
-            app,
-            "E · Fluxo completo até o scan unido",
-            "fluxo_uniao.py",
-            "{PROJETO}",
-            "--poses",
-            r"{TRABALHO}\{NOME}_poses.json",
-            "--saida",
-            r"{TRABALHO}\{NOME}_fluxo",
-            "--nome",
-            "{NOME}_unido",
-        ),
-    ]
+    r"""Varios scans da mesma peca ate a fusao e a malha conferidas (fluxo_uniao.py; aprovada no Projeto 9).
+    Poses: usa {TRABALHO}\{NOME}_poses.json ({guid: 4x4}, Merge Alignment do Revo) se existir; sem ele o fluxo alinha
+    sozinho (alinhar_varios + refino por mesma face). Com 3 ou mais scans roda direto. Com 2 scans as regras nao
+    decidem a limpeza: o 1o clique gera o atlas, o rascunho de rotulos e as imagens de previa e para; depois de
+    olhar {TRABALHO}\{NOME}_fluxotlas\<scan>\previa e corrigir rotulos.json se preciso, clicar de novo na receita
+    continua ate o Revo. A etapa final usa o mouse: importa num grupo NOVO do Revo, funde, gera a malha e confere."""
+    ctx = app.estado.ctx
+    projeto = ctx.get("projeto") or ""
+    if not projeto:
+        raise ValueError("Escolha o projeto na página Projeto.")
+    escolhidos = list(ctx.get("scans") or [])
+    scans = escolhidos or _scans_do_projeto(projeto)
+    if len(scans) < 2:
+        raise ValueError("A receita E precisa de pelo menos 2 scans da mesma peça. Para 1 scan use a receita A.")
+    saida = substituir(r"{TRABALHO}\{NOME}_fluxo", ctx)
+    poses = substituir(r"{TRABALHO}\{NOME}_poses.json", ctx)
+    base = ["{PROJETO}", "--saida", saida, "--nome", "{NOME}_unido"]
+    if escolhidos:
+        base += ["--scans", *escolhidos]
+    if os.path.exists(poses):
+        base += ["--poses", poses]
+    nome = os.path.basename(projeto.rstrip("\\/"))
+    # o Revo corta o nome do grupo em 30 caracteres: fim do nome do projeto + data e hora (grupo sempre novo)
+    revo = ["--revo-grupo", nome[-15:] + "_" + time.strftime("%m%d_%H%M"), "--revo-malha"]
+    parada = os.path.exists(os.path.join(saida, "rotulos.json")) and not os.path.exists(os.path.join(saida, "limpo"))
+    if parada:
+        return [
+            _job(
+                app,
+                "E2 · Continuar: limpar, alinhar, unir, fundir no Revo e conferir",
+                "fluxo_uniao.py",
+                *base,
+                "--continuar",
+                *revo,
+            )
+        ]
+    unido = os.path.exists(os.path.join(saida, "ciclo", "unido", nome + "_unido.revo"))
+    if unido and not os.path.exists(os.path.join(saida, "conferencia")):
+        return [
+            _job(
+                app,
+                "E3 · Só a etapa do Revo: fundir o scan unido, gerar a malha e conferir",
+                "fluxo_uniao.py",
+                "{PROJETO}",
+                "--saida",
+                saida,
+                "--nome",
+                "{NOME}_unido",
+                "--so-revo",
+                *revo,
+            )
+        ]
+    if os.path.isdir(saida) and os.listdir(saida):
+        raise ValueError(
+            f"A pasta {saida} já tem um resultado desta receita. Renomeie ou apague essa pasta para rodar de novo."
+        )
+    if len(scans) < 3:
+        return [
+            _job(
+                app,
+                "E1 · Atlas e rascunho de rótulos (PARA para revisão; depois clicar de novo na receita E)",
+                "fluxo_uniao.py",
+                *base,
+                "--so-rotulos",
+            )
+        ]
+    return [_job(app, "E · Fluxo completo: limpar, unir, fundir no Revo e conferir", "fluxo_uniao.py", *base, *revo)]
 
 
 RECEITAS = [
@@ -231,5 +294,5 @@ RECEITAS = [
     ("B · Duas partes da mesma peça", receita_b),
     ("C · Muitos scans (passos 1 a 5)", receita_c),
     ("D · Peça pequena em várias poses", receita_d),
-    ("E · Vários scans com poses (scan unido limpo)", receita_e),
+    ("E · Vários scans: scan unido, fusão e malha conferidas", receita_e),
 ]

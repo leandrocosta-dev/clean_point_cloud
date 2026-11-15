@@ -1067,6 +1067,15 @@ def cmd_sugerir(a):
     for s in sorted(os.listdir(raiz)):
         if not os.path.exists(os.path.join(raiz, s, "regioes_todas.json")):
             continue
+        if a.por_componente:
+            saida[s] = dict(
+                padrao="residuo",
+                poeira="ruido",
+                componentes={"0": "peca"},
+                motivo="rascunho de `sugerir --por-componente`: maior componente = peca; REVISAR com `previa`",
+            )
+            _LOG.info("%s: rascunho por componente (componente 0 = peca, resto = residuo)", s)
+            continue
         with open(os.path.join(raiz, s, "regioes_todas.json"), encoding="utf-8") as fh:
             linhas = json.load(fh)
         reg, cont = {}, dict.fromkeys(CLASSES, 0)
@@ -1289,6 +1298,12 @@ def main(argv=None):
     p.add_argument("--conf-peca", type=float, default=0.7)
     p.add_argument("--conf-lixo", type=float, default=0.15)
     p.add_argument("--ilhas", action="store_true", help="do que fica, so o maior componente conexo")
+    p.add_argument(
+        "--por-componente",
+        action="store_true",
+        help="rascunho sem medir confirmacao: o maior componente conexo de cada scan e a peca e o resto e residuo "
+        "(1 ou 2 scans; REVISAR nas imagens de `previa`: apoio encostado na peca vem junto)",
+    )
     p.add_argument(
         "--corte-placa-mm",
         type=float,

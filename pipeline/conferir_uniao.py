@@ -136,7 +136,7 @@ def desenhar(P, N, n, solto, pasta, ponto, titulo):
     return arqs
 
 
-def superficies_do_ciclo(ciclo):
+def superficies_do_ciclo(ciclo, min_obs=None):
     """Fusao propria de cada scan aceito (referencial comum), poses e scan base do unido."""
     with open(os.path.join(ciclo, "relatorio.json"), encoding="utf-8") as fh:
         rel = json.load(fh)
@@ -144,7 +144,7 @@ def superficies_do_ciclo(ciclo):
     with open(par["poses"], encoding="utf-8") as fh:
         poses = {k: np.asarray(v, float) for k, v in json.load(fh).items()}
     scans = list(rel["scans"])
-    a = argparse.Namespace(voxel=par["voxel"], min_obs=par["min_obs"], orientados=set())
+    a = argparse.Namespace(voxel=par["voxel"], min_obs=min_obs or par["min_obs"], orientados=set())
     sup = C.fundir_todos(os.path.join(ciclo, "projeto"), scans, poses, a)
     base = (rel.get("unido") or {}).get("base") or min(scans, key=lambda s: float(np.abs(poses[s] - np.eye(4)).sum()))
     return sup, poses, base
@@ -157,6 +157,12 @@ def main(argv=None):
     ap.add_argument("--malha", help="PLY da malha do scan unido (mesmo referencial da fusao)")
     ap.add_argument("--saida", required=True, help="pasta nova")
     ap.add_argument("--raio", type=float, default=0.3, help="mm para um scan contar como apoio de um ponto fundido")
+    ap.add_argument(
+        "--min-obs",
+        type=int,
+        help="observacoes por voxel para contar como superficie do scan (padrao: o do ciclo, 4); usar 1 em scan com "
+        "poucos quadros, onde a fusao do Revo tem pontos que a fusao propria com 4 observacoes nao tem",
+    )
     ap.add_argument("--max-sem-apoio-pct", type=float, default=1.5)
     ap.add_argument("--max-soltos-pct", type=float, default=0.05)
     ap.add_argument("--max-malha-componentes", type=int, default=1)
@@ -170,7 +176,7 @@ def main(argv=None):
     if os.path.exists(saida) and os.listdir(saida):
         sys.exit(f"destino ja existe: {saida}")
     t0 = time.time()
-    sup, poses, base = superficies_do_ciclo(ciclo)
+    sup, poses, base = superficies_do_ciclo(ciclo, a.min_obs)
     P, N = ler_nuvem(a.fusao, normais=True)
     P = gpu.para_gpu(P, m.float64)
     N = gpu.para_gpu(N, m.float64) if N is not None and len(N) == len(P) else gpu.normais_pca(P, k=20)

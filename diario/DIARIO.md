@@ -308,3 +308,9 @@ Objetivo do usuario: um pára-choque COMPLETO fundido e alinhado, para engenhari
 - Perfil do ciclo: 76% do tempo numa analise repetida (25 chamadas). Com memoria por par de scans (`Consenso`) o ciclo caiu de 220 para 112 s e o fluxo de 362 para 224 s, com corte identico.
 - Novo `conferir_uniao.py` mede a fusao final do Revo e a malha; a fusao aprovada passa (0,37% sem apoio, 1 componente) e a malha do Revo reprova por 4 componentes soltos (4.910 triangulos).
 - Duvida decidida pelo consenso, vies de pose por celula, motivo do descarte, aviso de VRAM, tolerancias pelo ruido e `--revo-grupo` (importa, funde e confere). Numeros e limites: GUIA_PIPELINE, "Receita E", item MELHORIAS DE CONFIANCA.
+
+## 2026-11-15: Receita E validada numa 2a peca (Project20261012_105241, moldura ~430 mm, 2 scans)
+- Nao rodava como estava (2 scans, sem poses). Limpeza pelos rotulos que a LLM deu olhando o atlas; `refinar_poses.py` novo corrigiu o alinhamento frente/verso (mediana 0,52 -> 0,075 mm); fluxo ganhou `--atlas`, `--escala`, `--refinar-poses` e modo de 2 scans. Fusao no Revo: 1 componente, 0 soltos. Detalhes e armadilhas: GUIA, secao "Receita E numa 2a peca".
+
+## 2026-11-15: receita E da GUI reproduz o processamento feito no terminal
+- A receita montava so `fluxo_uniao --poses`; agora escolhe a etapa pelo estado da pasta (direto, parada para revisar rotulos com 2 scans, continuar, so Revo), alinha sem arquivo de poses, funde, limpa a malha e confere. Reproduziu a moldura (1.465.475 pontos, malha de 1 componente). Armadilha: nome de grupo do Revo corta em 30 caracteres. Detalhes: GUIA, "Receita E na GUI".
