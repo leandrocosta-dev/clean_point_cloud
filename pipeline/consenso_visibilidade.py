@@ -351,7 +351,7 @@ def gravar_scan(proj, destino, g, T_ref, voxel, chaves_rem, calib, min_pix, tmp)
     return st
 
 
-def main():
+def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("projeto")
     ap.add_argument("--poses", required=True, help="JSON {guid: 4x4 scan->referencial comum}")
@@ -366,7 +366,7 @@ def main():
         "--min-livre-quadros", type=int, default=2, help="quadros de um scan com espaco livre para ele contradizer"
     )
     ap.add_argument("--min-pix-quadro", type=int, default=200, help="quadro com menos pixels perde a profundidade")
-    a = ap.parse_args()
+    a = ap.parse_args(argv)
     if a.voxel <= 0 or a.tol <= 0 or a.passo_quadros < 1 or a.min_livre_quadros < 1:
         ap.error("voxel e tol > 0; passo-quadros e min-livre-quadros >= 1")
     baixa_prioridade()
@@ -443,7 +443,7 @@ def main():
             )
             rel["scans"][g] = r
             for nome, m in (("removidos", est == 1), ("inconclusivos", est == 0), ("confirmados", est == 2)):
-                gravar_ply_pontos(os.path.join(insp, f"{g[:8]}_{nome}.ply"), d["C"][m])
+                gravar_ply_pontos(os.path.join(insp, f"{g}_{nome}.ply"), d["C"][m])
             _LOGGER.info(
                 "%s",
                 f"  {g}: confirmados {r['confirmados']:,} | REMOVER {r['removidos']:,} ({r['pixels_em_removidos_pct']:.2f}% dos pixels) | inconclusivos {r['inconclusivos']:,} (sem cobertura {r['sem_cobertura_de_outros']:,}) ({r['segundos_votacao']}s)",

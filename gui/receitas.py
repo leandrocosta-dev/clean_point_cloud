@@ -206,9 +206,30 @@ def receita_d(app):
     ]
 
 
+def receita_e(app):
+    r"""Varios scans da mesma peca COM poses (Merge Alignment do Revo ou alinhar_varios): limpa por regioes, descarta
+    scan ruim, tira o que outros scans viram atraves e o trecho fora do consenso, e grava o scan unido para fundir.
+    Aprovada no Projeto 9 em 2026-11-15. O poses.json ({guid: 4x4}) deve estar em {TRABALHO}\{NOME}_poses.json."""
+    return [
+        _job(
+            app,
+            "E · Fluxo completo até o scan unido",
+            "fluxo_uniao.py",
+            "{PROJETO}",
+            "--poses",
+            r"{TRABALHO}\{NOME}_poses.json",
+            "--saida",
+            r"{TRABALHO}\{NOME}_fluxo",
+            "--nome",
+            "{NOME}_unido",
+        ),
+    ]
+
+
 RECEITAS = [
     ("A · Um scan (limpeza + Revo)", receita_a),
     ("B · Duas partes da mesma peça", receita_b),
     ("C · Muitos scans (passos 1 a 5)", receita_c),
     ("D · Peça pequena em várias poses", receita_d),
+    ("E · Vários scans com poses (scan unido limpo)", receita_e),
 ]

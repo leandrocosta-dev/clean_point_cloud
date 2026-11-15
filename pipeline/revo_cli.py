@@ -88,8 +88,14 @@ def cmd_importar(a):
     ui.novo_grupo(a.grupo)
     achados = ui.carregar_projeto(os.path.abspath(a.revo))
     if ui._contagem() < len(achados):  # a grade do grupo nao se atualiza sozinha apos o Load Project
-        ui.entrar_grupo("Ungrouped")
-        ui.entrar_grupo(a.grupo)
+        try:
+            ui.entrar_grupo("Ungrouped")
+            ui.entrar_grupo(a.grupo)
+        except (
+            LookupError,
+            RuntimeError,
+        ):  # projeto de UM scan ou grade que nao troca de grupo: o Revo ja abre o scan e a lista de grupos nao esta na tela
+            print("o Revo abriu o scan direto (tela do scan); grade do grupo nao atualizada")
     print("grupo:", a.grupo)
     for nome, pasta in sorted(achados.items()):
         print(" ", nome, pasta)
